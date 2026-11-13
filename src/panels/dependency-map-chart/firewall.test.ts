@@ -51,7 +51,11 @@ describe("firewall rules per wave", () => {
     expect(l).not.toContain("win05 (10.1.1.25) -> db02 (10.1.2.2):1521/tcp");
     // portal -> billing is inside the new DC after wave 2.
     expect(l.some((x) => x.includes(":8443/"))).toBe(false);
-    expect(l).toHaveLength(19);
+    // billing calls the orders NodePort on one node: a rule to that node only.
+    expect(l).toContain(
+      "app03 (10.1.1.13) -> perses-plugin-depmap-worker2 (10.1.8.12):30080/tcp",
+    );
+    expect(l).toHaveLength(20);
     expect(new Set(l).size).toBe(l.length);
   });
 

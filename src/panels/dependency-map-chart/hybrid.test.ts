@@ -40,6 +40,19 @@ describe("hybrid estate: model", () => {
     });
   });
 
+  it("an edge lists the named ranges (OBI src_cidr / dst_cidr) it crosses", () => {
+    const samples = hybridSamples().map((x) =>
+      x.src === "10.244.1.4" && x.dst === "10.1.2.10"
+        ? { ...x, srcCidr: "pods", dstCidr: "old-dc" }
+        : x,
+    );
+    const e = hybridModel(samples).edges.find(
+      (x) => x.source === "orders" && x.target === "oracle",
+    )!;
+    expect(e.crosses).toEqual(["pods -> old-dc"]);
+    expect(m.edges.find((x) => x.source === "billing")!.crosses).toEqual([]);
+  });
+
   it("a mapped workload: its pods as instances on their nodes, HA from replicas", () => {
     const orders = m.byId.get("orders")!;
     expect(orders.ha).toBe("active-active");

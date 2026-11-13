@@ -51,3 +51,24 @@ services:
 external:
   - { match: 198.51.100.21, name: ftp.partner.example.com, owner: partner }
   - { match: 203.0.113.0/24, name: payment provider, owner: finance IT }
+
+# Optional: Kubernetes. Pods come and go, so there are no pod addresses here: OBI on the nodes reports
+# each flow with the pod's namespace and workload, and services are matched on those. Leave this out
+# for an estate without Kubernetes; mappings without it stay valid.
+kubernetes:
+  clusters:
+    - name: example-cluster # as OBI reports it in k8s_cluster_name (OTEL_EBPF_KUBE_CLUSTER_NAME)
+      nodes: # ip: the address the rest of the network sees (SNATed pod traffic leaves with it)
+        - { name: node-1, ip: 10.0.8.1 }
+        - { name: node-2, ip: 10.0.8.2 }
+        - { name: node-3, ip: 10.0.8.3 }
+      # egressIps: [10.0.8.100]       # when pod traffic leaves through an egress gateway, not the nodes
+      # hideNamespaces: [kube-system] # the default
+  services:
+    - id: orders
+      owner: shop team
+      namespace: shop
+      workload: orders # the Deployment / StatefulSet / DaemonSet name, or a glob; default the id
+      replicas: 3 # HA is judged against this: active-active, minUp 1 unless set
+      minUp: 2
+      nodePorts: [30080] # node:30080 from outside the cluster is a call to orders

@@ -20,6 +20,7 @@ describe("layout", () => {
       "Wave 1 (March)",
       "Wave 2",
       "Wave 3",
+      "Kubernetes · example-cluster",
       "Stays",
       "Outside",
     ]);

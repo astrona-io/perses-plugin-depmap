@@ -38,7 +38,7 @@ jest.mock("./GraphCanvas", () => ({
     lastOption = p.option as typeof lastOption;
     return (
       <div data-testid="graph">
-        <button onClick={() => p.onNodeClick("chip:db01")}>
+        <button onClick={() => p.onNodeClick("chip:oracle|db01")}>
           click chip db01
         </button>
         <button onClick={() => p.onNodeClick("portal")}>click portal</button>
@@ -162,7 +162,12 @@ describe("DependencyMapChartComponent", () => {
     expect(screen.getByText("fallback script")).toBeInTheDocument();
     const ids = lastOption!.series[0]!.data.map((d) => d.id);
     expect(ids).toEqual(
-      expect.arrayContaining(["portal", "oracle", "chip:db01", "ip:10.1.7.22"]),
+      expect.arrayContaining([
+        "portal",
+        "oracle",
+        "chip:oracle|db01",
+        "ip:10.1.7.22",
+      ]),
     );
   });
 });

@@ -6,7 +6,7 @@
   },
   "spec": {
     "display": {
-      "name": "Dependency map: old data centre"
+      "name": "Dependency map: old data centre and Kubernetes"
     },
     "duration": "30d",
     "variables": [],
@@ -16,7 +16,7 @@
         "spec": {
           "display": {
             "name": "Who talks to whom",
-            "description": "Connections seen over the last 30 days, by migration wave. Click a service for its instances, calls and firewall rules; switch to What if to take servers down."
+            "description": "Connections seen over the last 30 days, by migration wave, with the Kubernetes cluster in its own lane. Click a service for its instances, calls, the path through it and firewall rules; switch to What if to take servers or nodes down."
           },
           "plugin": {
             "kind": "DependencyMapChart",
@@ -25,7 +25,7 @@
                 "kind": "PrometheusDatasource"
               },
               "window": "30d",
-              "mapping": "services:\n  - id: lb\n    name: load balancer\n    owner: network team\n    wave: 1\n    ha: active-passive\n    process: haproxy · keepalived\n    vip: 10.1.1.10\n    instances:\n      - { host: edge01, ip: 10.1.1.1, role: primary }\n      - { host: edge02, ip: 10.1.1.2, role: standby }\n  - id: api\n    name: api-gw\n    owner: platform team\n    wave: 1\n    process: nginx\n    instances:\n      - { host: app02, ip: 10.1.1.12 }\n  - id: portal\n    name: portal\n    owner: web team\n    wave: 1\n    ha: active-active\n    load: 65\n    process: tomcat\n    vip: 10.1.1.20\n    instances:\n      - { host: app01, ip: 10.1.1.11 }\n      - { host: app04, ip: 10.1.1.14 }\n  - id: billing\n    name: billing\n    owner: finance IT\n    wave: 2\n    process: java\n    instances:\n      - { host: app03, ip: 10.1.1.13 }\n  - id: erp\n    name: erp-sync\n    owner: finance IT\n    wave: 2\n    process: erpsync.exe\n    instances:\n      - { host: win05, ip: 10.1.1.25 }\n  - id: reports\n    name: reports\n    owner: finance IT\n    wave: 2\n    process: cron · reportgen\n    instances:\n      - { host: batch01, ip: 10.1.3.1 }\n  - id: import\n    name: file-import\n    owner: integration team\n    wave: 2\n    process: cron · importer\n    instances:\n      - { host: batch02, ip: 10.1.3.2 }\n  - id: oracle\n    name: oracle\n    owner: DBA team\n    wave: 3\n    ha: active-passive\n    process: oracle · Data Guard\n    vip: 10.1.2.10\n    instances:\n      - { host: db01, ip: 10.1.2.1, role: primary }\n      - { host: db02, ip: 10.1.2.2, role: standby }\n  - id: mq\n    name: message queue\n    owner: integration team\n    wave: 3\n    process: mq broker\n    instances:\n      - { host: mq01, ip: 10.1.2.21 }\n  - id: ldap\n    name: ldap\n    owner: identity team\n    ha: quorum\n    process: slapd\n    instances:\n      - { host: ldap01, ip: 10.1.4.1 }\n      - { host: ldap02, ip: 10.1.4.2 }\n      - { host: ldap03, ip: 10.1.4.3 }\n  - id: nfs\n    name: nfs\n    owner: storage team\n    process: nfsd\n    instances:\n      - { host: nfs01, ip: 10.1.4.10 }\n  - id: smtp\n    name: smtp relay\n    owner: messaging team\n    process: postfix\n    instances:\n      - { host: smtp01, ip: 10.1.4.20 }\nexternal:\n  - { match: 198.51.100.21, name: ftp.partner.example.com, owner: partner }\n  - { match: 198.51.100.43, name: bank-api.example.com, owner: bank }",
+              "mapping": "services:\n  - id: lb\n    name: load balancer\n    owner: network team\n    wave: 1\n    ha: active-passive\n    process: haproxy · keepalived\n    vip: 10.1.1.10\n    instances:\n      - { host: edge01, ip: 10.1.1.1, role: primary }\n      - { host: edge02, ip: 10.1.1.2, role: standby }\n  - id: api\n    name: api-gw\n    owner: platform team\n    wave: 1\n    process: nginx\n    instances:\n      - { host: app02, ip: 10.1.1.12 }\n  - id: portal\n    name: portal\n    owner: web team\n    wave: 1\n    ha: active-active\n    load: 65\n    process: tomcat\n    vip: 10.1.1.20\n    instances:\n      - { host: app01, ip: 10.1.1.11 }\n      - { host: app04, ip: 10.1.1.14 }\n  - id: billing\n    name: billing\n    owner: finance IT\n    wave: 2\n    process: java\n    instances:\n      - { host: app03, ip: 10.1.1.13 }\n  - id: erp\n    name: erp-sync\n    owner: finance IT\n    wave: 2\n    process: erpsync.exe\n    instances:\n      - { host: win05, ip: 10.1.1.25 }\n  - id: reports\n    name: reports\n    owner: finance IT\n    wave: 2\n    process: cron · reportgen\n    instances:\n      - { host: batch01, ip: 10.1.3.1 }\n  - id: import\n    name: file-import\n    owner: integration team\n    wave: 2\n    process: cron · importer\n    instances:\n      - { host: batch02, ip: 10.1.3.2 }\n  - id: oracle\n    name: oracle\n    owner: DBA team\n    wave: 3\n    ha: active-passive\n    process: oracle · Data Guard\n    vip: 10.1.2.10\n    instances:\n      - { host: db01, ip: 10.1.2.1, role: primary }\n      - { host: db02, ip: 10.1.2.2, role: standby }\n  - id: mq\n    name: message queue\n    owner: integration team\n    wave: 3\n    process: mq broker\n    instances:\n      - { host: mq01, ip: 10.1.2.21 }\n  - id: ldap\n    name: ldap\n    owner: identity team\n    ha: quorum\n    process: slapd\n    instances:\n      - { host: ldap01, ip: 10.1.4.1 }\n      - { host: ldap02, ip: 10.1.4.2 }\n      - { host: ldap03, ip: 10.1.4.3 }\n  - id: nfs\n    name: nfs\n    owner: storage team\n    process: nfsd\n    instances:\n      - { host: nfs01, ip: 10.1.4.10 }\n  - id: smtp\n    name: smtp relay\n    owner: messaging team\n    process: postfix\n    instances:\n      - { host: smtp01, ip: 10.1.4.20 }\n  - id: monitoring\n    name: monitoring\n    owner: platform team\n    process: prometheus\n    instances:\n      - { host: mon01, ip: 10.1.0.9 }\nexternal:\n  - { match: 198.51.100.21, name: ftp.partner.example.com, owner: partner }\n  - { match: 198.51.100.43, name: bank-api.example.com, owner: bank }\nkubernetes:\n  clusters:\n    - name: example-cluster\n      # kind's own storage provisioner and the collector itself are plumbing, like kube-system.\n      hideNamespaces: [kube-system, local-path-storage, depmap]\n      nodes:\n        - { name: perses-plugin-depmap-control-plane, ip: 10.1.8.10 }\n        - { name: perses-plugin-depmap-worker, ip: 10.1.8.11 }\n        - { name: perses-plugin-depmap-worker2, ip: 10.1.8.12 }\n  services:\n    - id: orders\n      name: orders\n      owner: shop team\n      namespace: shop\n      replicas: 2\n      process: orders (Deployment)\n      nodePorts: [30080]",
               "lanes": {
                 "waveLabels": {
                   "1": "Wave 1 (March)",
@@ -59,6 +59,12 @@
                   "name": "NFS lost",
                   "down": [
                     "nfs01"
+                  ]
+                },
+                {
+                  "name": "Kubernetes node lost",
+                  "down": [
+                    "perses-plugin-depmap-worker2"
                   ]
                 }
               ],

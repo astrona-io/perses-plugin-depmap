@@ -39,3 +39,6 @@ attributes:
         - dst.address
         - server.port
         - dst.name
+        - src.cidr # names from network.cidrs above: which ranges a connection crosses
+        - dst.cidr
+        - obi.ip # the host that reported the flow

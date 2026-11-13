@@ -96,6 +96,32 @@ services:
     process: postfix
     instances:
       - { host: smtp01, ip: 10.1.4.20 }
+  - id: monitoring
+    name: monitoring
+    owner: platform team
+    process: prometheus
+    instances:
+      - { host: mon01, ip: 10.1.0.9 }
 external:
   - { match: 198.51.100.21, name: ftp.partner.example.com, owner: partner }
   - { match: 198.51.100.43, name: bank-api.example.com, owner: bank }
+# The Kubernetes half (dev/hybrid.sh): a kind cluster whose nodes sit in the old data centre at
+# 10.1.8.10-12. No pod addresses: pods are grouped by namespace and workload from OBI's decoration.
+# pricing is not listed, so it is grouped automatically.
+kubernetes:
+  clusters:
+    - name: example-cluster
+      # kind's own storage provisioner and the collector itself are plumbing, like kube-system.
+      hideNamespaces: [kube-system, local-path-storage, depmap]
+      nodes:
+        - { name: perses-plugin-depmap-control-plane, ip: 10.1.8.10 }
+        - { name: perses-plugin-depmap-worker, ip: 10.1.8.11 }
+        - { name: perses-plugin-depmap-worker2, ip: 10.1.8.12 }
+  services:
+    - id: orders
+      name: orders
+      owner: shop team
+      namespace: shop
+      replicas: 2
+      process: orders (Deployment)
+      nodePorts: [30080]

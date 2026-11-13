@@ -30,7 +30,13 @@ import {
   wavesOf,
 } from "./firewall";
 import { FREQUENCY_LABELS } from "./format";
-import { buildOption, fitBox, Palette, STATE_LABELS } from "./chart-option";
+import {
+  buildOption,
+  fitBox,
+  Palette,
+  parseChipId,
+  STATE_LABELS,
+} from "./chart-option";
 import { GraphCanvas } from "./GraphCanvas";
 import { laneSpecs, layoutGraph } from "./layout";
 import { updateWaves } from "./mapping";
@@ -247,13 +253,10 @@ export function DependencyMapView(props: DependencyMapViewProps): ReactElement {
   const onNodeClick = useCallback(
     (id: string) => {
       if (id.startsWith("chip:")) {
-        const host = id.slice(5);
+        const { service, host } = parseChipId(id);
         if (mode === "failure") toggleHost(host);
         else {
-          const owner = view.model.nodes.find((n) =>
-            n.instances.some((i) => i.host === host),
-          );
-          setSelectedNode(owner?.id);
+          setSelectedNode(service);
           setSelectedEdge(undefined);
         }
         return;
@@ -268,7 +271,7 @@ export function DependencyMapView(props: DependencyMapViewProps): ReactElement {
       setSelectedEdge(undefined);
       if (narrow) setPanelOpen(true);
     },
-    [mode, toggleHost, view.model, narrow],
+    [mode, toggleHost, narrow],
   );
   const onEdgeClick = useCallback(
     (id: string) => {

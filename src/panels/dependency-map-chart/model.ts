@@ -127,6 +127,8 @@ export interface DepEdge {
   /** Caller instances that only ever connected to one instance of an HA callee: caller host → callee host. */
   pins: Record<string, string>;
   processes: string[];
+  /** OBI's named ranges (network.cidrs) the connection crosses, as "src -> dst"; empty when unknown. */
+  crosses: string[];
 }
 
 export interface DepModel {
@@ -450,6 +452,7 @@ export function buildModel(
     lastSeen: number;
     pairs: Map<string, Set<string>>;
     processes: Set<string>;
+    crosses: Set<string>;
   }
   const acc = new Map<string, Acc>();
   const keyFor = (
@@ -480,6 +483,7 @@ export function buildModel(
         lastSeen: 0,
         pairs: new Map(),
         processes: new Set(),
+        crosses: new Set(),
       };
       acc.set(key, e);
     }
@@ -490,6 +494,8 @@ export function buildModel(
     }
     e.lastSeen = Math.max(e.lastSeen, s.lastSeen);
     if (s.srcProcess) e.processes.add(s.srcProcess);
+    if (s.srcCidr || s.dstCidr)
+      e.crosses.add(`${s.srcCidr || "?"} -> ${s.dstCidr || "?"}`);
     const set = e.pairs.get(a.instance) ?? new Set<string>();
     set.add(b.instance);
     e.pairs.set(a.instance, set);
@@ -529,6 +535,7 @@ export function buildModel(
       pairs,
       pins,
       processes: [...e.processes].sort(),
+      crosses: [...e.crosses].sort(),
     });
   }
   edges.sort((x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));

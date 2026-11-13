@@ -4,6 +4,8 @@ import {
   hybridMapping,
   hybridSamples,
   node,
+  pod,
+  sample,
   service,
 } from "../../test-utils/hybrid";
 import {
@@ -146,5 +148,42 @@ describe("serviceIdOf", () => {
     expect(globMatch("orders-*", "orders-v2")).toBe(true);
     expect(globMatch("orders-*", "orders")).toBe(false);
     expect(globMatch("a.b", "axb")).toBe(false);
+  });
+});
+
+describe("pod range gateways", () => {
+  const mapping = hybridMapping();
+
+  it("the .1 of a node's pod /24 is that node (bridge CNI SNAT for hairpin and probes)", () => {
+    const inv = buildInventory(mapping, hybridSamples());
+    expect(inv.podGateways.get("10.244.1.1")).toEqual({
+      cluster: CLUSTER,
+      node: "worker",
+    });
+    expect(resolveEndpoint(mapping, inv, "10.244.3.1", undefined)).toEqual({
+      kind: "node",
+      cluster: CLUSTER,
+      node: "worker2",
+    });
+    // Not a gateway address, and a decorated side is never overridden.
+    expect(resolveEndpoint(mapping, inv, "10.244.3.9", undefined).kind).toBe(
+      "other",
+    );
+  });
+
+  it("ignores /24s shared by pods of two nodes, and host-network pods on node addresses", () => {
+    const inv = buildInventory(mapping, [
+      sample("10.244.7.4", "10.1.2.10", 1521, {
+        src: pod("a-1", "a", "worker", "10.89.0.16"),
+      }),
+      sample("10.244.7.5", "10.1.2.10", 1521, {
+        src: pod("b-1", "b", "worker2", "10.89.0.14"),
+      }),
+      sample("10.89.0.14", "10.1.2.10", 1521, {
+        src: pod("kube-proxy-x", "kube-proxy", "worker2", "10.89.0.14"),
+      }),
+    ]);
+    expect(inv.podGateways.has("10.244.7.1")).toBe(false);
+    expect(inv.podGateways.has("10.89.0.1")).toBe(false);
   });
 });

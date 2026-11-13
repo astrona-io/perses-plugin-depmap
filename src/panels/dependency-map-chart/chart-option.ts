@@ -85,7 +85,19 @@ export function stateColor(s: ServiceState, p: Palette): string {
 }
 
 const portId = (id: string, side: "L" | "R"): string => `port:${side}:${id}`;
-export const chipId = (host: string): string => `chip:${host}`;
+/**
+ * Id of an instance chip. Carries the service, because one host can be an instance of two map nodes
+ * (a Kubernetes node is in its cluster's node group and in its "via node (NAT)" node), and ECharts
+ * needs unique ids.
+ */
+export const chipId = (service: string, host: string): string =>
+  `chip:${service}|${host}`;
+/** Service and host of a chip id (hosts never contain "|"). */
+export function parseChipId(id: string): { service: string; host: string } {
+  const rest = id.slice(5);
+  const i = rest.lastIndexOf("|");
+  return { service: rest.slice(0, i), host: rest.slice(i + 1) };
+}
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
@@ -171,6 +183,8 @@ export function edgeTooltip(
     rows.push(`${formatBytes(e.bytesPerDay)} per day`);
   if (e.processes.length)
     rows.push(`Process: ${escapeHtml(e.processes.join(", "))}`);
+  if (e.crosses?.length)
+    rows.push(`Ranges: ${escapeHtml(e.crosses.join(", "))}`);
   for (const [c, callee] of Object.entries(e.pins))
     rows.push(
       `<b>Hard-wired</b>: ${escapeHtml(c)} only uses ${escapeHtml(callee)}`,
@@ -355,7 +369,7 @@ export function buildOption(input: OptionInput): object {
         : "";
     const color = isDown ? p.error : lost ? p.warning : p.alpha(p.text, 0.08);
     data.push({
-      id: chipId(c.host),
+      id: chipId(n.id, c.host),
       name: c.host,
       x: c.x,
       y: c.y,

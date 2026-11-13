@@ -406,6 +406,11 @@ export function SidePanel(props: SidePanelProps): ReactElement {
               {formatBytes(edge.bytesPerDay)} per day
             </Typography>
           ) : null}
+          {edge.crosses.length ? (
+            <Typography variant="body2">
+              Ranges: {edge.crosses.join(", ")}
+            </Typography>
+          ) : null}
           {Object.entries(edge.pairs).map(([c, callees]) => (
             <Typography key={c} variant="body2">
               {c} → {callees.join(", ")}

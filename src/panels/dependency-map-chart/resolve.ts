@@ -68,6 +68,13 @@ export interface Inventory {
   services: Map<string, { cluster: string; namespace: string; name: string }>;
   /** Workloads seen in pods, as `cluster/namespace/workload`. */
   workloads: Set<string>;
+  /**
+   * Gateway of each node's pod range (`a.b.c.1` of the /24 its pods are in) -> the node. Bridge CNIs
+   * (kindnet, flannel, the bridge plugin) give every node a /24 of pod addresses and SNAT to its .1
+   * what kube-proxy hairpins to a local pod and what the node itself sends to its pods (probes).
+   * Learned from the decorated pods: only /24s whose pods all sit on one node count.
+   */
+  podGateways: Map<string, { cluster: string; node: string }>;
   defaultCluster: string;
 }
 
@@ -114,6 +121,7 @@ export function buildInventory(
     pods: new Map(),
     services: new Map(),
     workloads: new Set(),
+    podGateways: new Map(),
     defaultCluster: k?.clusters.length === 1 ? k.clusters[0]!.name : "",
   };
   if (!inv.defaultCluster) {
@@ -158,7 +166,28 @@ export function buildInventory(
     learn(s.src, s.srcK8s);
     learn(s.dst, s.dstK8s);
   }
+  const ranges = new Map<string, Set<string>>();
+  for (const [ip, p] of inv.pods) {
+    // Host-network pods (kube-proxy, the CNI agent) carry their node's address: not a pod range.
+    if (!p.node || inv.nodes.has(ip) || inv.nodeIp.get(p.node) === ip) continue;
+    const gw = gatewayOf(ip);
+    if (!gw) continue;
+    const set = ranges.get(gw) ?? new Set<string>();
+    set.add(`${p.cluster}\u0000${p.node}`);
+    ranges.set(gw, set);
+  }
+  for (const [gw, set] of ranges) {
+    if (set.size !== 1 || inv.pods.has(gw) || inv.nodes.has(gw)) continue;
+    const [cluster, node] = [...set][0]!.split("\u0000") as [string, string];
+    inv.podGateways.set(gw, { cluster, node });
+  }
   return inv;
+}
+
+/** `a.b.c.1` for an IPv4 `a.b.c.d`; undefined for anything else. */
+function gatewayOf(ip: string): string | undefined {
+  const m = /^(\d+\.\d+\.\d+)\.\d+$/.exec(ip);
+  return m ? `${m[1]}.1` : undefined;
 }
 
 function hidden(inv: Inventory, cluster: string, namespace: string): boolean {
@@ -235,6 +264,7 @@ export function resolveEndpoint(
     return { kind: "service", ...svc };
   }
   let node = inv.nodes.get(ip);
+  if (!node && !ref) node = inv.podGateways.get(ip);
   if (!node && ref?.type === "Node" && ref.name)
     node = { cluster: clusterOf(ref, inv), node: ref.name };
   if (node) {

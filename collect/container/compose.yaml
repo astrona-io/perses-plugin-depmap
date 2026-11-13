@@ -1,0 +1,20 @@
+# OBI as a container on a Docker or Podman host, for the dependency map: network flow metrics only.
+#   docker compose -f collect/container/compose.yaml up -d      (or podman compose, run as root)
+#   docker compose -f collect/container/compose.yaml down
+#
+# privileged and pid: host as in the OBI docs ("Run OBI as a Docker container"). network_mode: host so
+# OBI sees the host's interfaces, the container bridges and every container's traffic, as the OBI
+# Kubernetes DaemonSet does with hostNetwork. Rootless podman and rootless Docker cannot create the
+# eBPF maps OBI needs: run this with a rootful engine.
+services:
+  obi:
+    image: docker.io/otel/ebpf-instrument:v1.0.0
+    container_name: obi-depmap
+    restart: unless-stopped
+    privileged: true
+    pid: host
+    network_mode: host # metrics on the host's port 9400
+    environment:
+      OTEL_EBPF_CONFIG_PATH: /config/config.yaml
+    volumes:
+      - ../obi/config.yaml:/config/config.yaml:ro

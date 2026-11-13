@@ -7,7 +7,7 @@ describe("parseMapping", () => {
   it("parses the example estate without errors", () => {
     const r = parseMapping(MAPPING_YAML);
     expect(r.errors).toEqual([]);
-    expect(r.mapping.services).toHaveLength(12);
+    expect(r.mapping.services).toHaveLength(13);
     expect(r.mapping.external).toHaveLength(2);
   });
 
@@ -186,8 +186,9 @@ ${k}`;
   });
 
   it("a mapping without kubernetes (v0.1) still parses, with no kubernetes section", () => {
-    const r = parseMapping(MAPPING_YAML);
+    const r = parseMapping(MAPPING_YAML.split("\nkubernetes:")[0]!);
     expect(r.errors).toEqual([]);
+    expect(r.mapping.services).toHaveLength(13);
     expect(r.mapping.kubernetes).toBeUndefined();
   });
 
