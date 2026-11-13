@@ -84,8 +84,29 @@ export function evaluateHa(
   if (all.length === 0) return { state: "ok", reason: "" };
   const dead = all.filter((i) => down.has(i.host));
   if (dead.length === 0) return { state: "ok", reason: "" };
-  const up = all.filter((i) => !down.has(i.host));
-  const n = all.length;
+  let up = all.filter((i) => !down.has(i.host));
+  let n = all.length;
+  // Kubernetes: judged against the desired replicas, not the pods that happened to be seen.
+  if (node.k8s?.type === "workload" && node.replicas && node.replicas > n) {
+    const extra = node.replicas - n;
+    n = node.replicas;
+    up = [...up, ...Array.from({ length: extra }, () => all[0]!)];
+  }
+  const r = haRule(node, all, dead, up, n, down);
+  if (node.k8s?.type === "workload" && r.state !== "ok")
+    r.reason +=
+      "; Kubernetes reschedules the pods (about 5 min after a node is lost)";
+  return r;
+}
+
+function haRule(
+  node: ServiceNode,
+  all: ServiceNode["instances"],
+  dead: ServiceNode["instances"],
+  up: ServiceNode["instances"],
+  n: number,
+  down: ReadonlySet<string>,
+): HaResult {
   switch (node.ha) {
     case "single":
       return {
@@ -146,11 +167,26 @@ function emptyCounts(): Record<ServiceState, number> {
   >;
 }
 
+/**
+ * Down hosts with what goes down with them across the cluster boundary: a Kubernetes node takes its
+ * pods (instances whose `node` is it) and its own instances (in the node group, NAT nodes) with it.
+ */
+export function expandDown(
+  model: Pick<DepModel, "nodes">,
+  downHosts: Iterable<string>,
+): Set<string> {
+  const down = new Set(downHosts);
+  for (const n of model.nodes)
+    for (const i of n.instances)
+      if (i.node && down.has(i.node)) down.add(i.host);
+  return down;
+}
+
 export function evaluateFailure(
   model: Pick<DepModel, "nodes" | "edges" | "byId">,
   downHosts: Iterable<string>,
 ): FailureResult {
-  const down = new Set(downHosts);
+  const down = expandDown(model, downHosts);
   const { nodes, edges, byId } = model;
 
   // 2. Hard-wired callers, to a fixpoint. `effective` = really down + lost.
@@ -290,9 +326,13 @@ export function loseOneServer(
   model: Pick<DepModel, "nodes" | "edges" | "byId">,
 ): SinglePointOfFailure[] {
   const out: SinglePointOfFailure[] = [];
+  const tried = new Set<string>();
   for (const node of model.nodes) {
     if (node.kind === "external") continue;
     for (const i of node.instances) {
+      // A Kubernetes node is an instance of the node group and of its NAT node: try it once.
+      if (tried.has(i.host)) continue;
+      tried.add(i.host);
       const r = evaluateFailure(model, [i.host]);
       if (r.outages.length > 0)
         out.push({ host: i.host, service: node.id, outages: r.outages });
@@ -356,7 +396,57 @@ export function needsOf(
 
 /** Every instance host the toggles can take down (VIPs are not instances). */
 export function allHosts(model: Pick<DepModel, "nodes">): string[] {
-  return model.nodes
-    .flatMap((n) => n.instances.map((i) => i.host))
-    .filter((h) => h !== VIP);
+  return [
+    ...new Set(
+      model.nodes
+        .flatMap((n) => n.instances.map((i) => i.host))
+        .filter((h) => h !== VIP),
+    ),
+  ];
+}
+
+export interface HopChain {
+  /** The selected service and everything on a path through it. */
+  nodes: Set<string>;
+  edges: Set<string>;
+}
+
+/**
+ * Every path through a service: its transitive callers and its transitive callees, with the edges
+ * between them that run toward it or away from it. Across the cluster boundary this is the hop chain,
+ * e.g. VM -> NodePort workload -> VM.
+ */
+export function hopChains(
+  model: Pick<DepModel, "edges">,
+  id: string,
+): HopChain {
+  const walk = (dir: "up" | "down"): Set<string> => {
+    const next = new Map<string, string[]>();
+    for (const e of model.edges) {
+      const [from, to] =
+        dir === "down" ? [e.source, e.target] : [e.target, e.source];
+      const list = next.get(from) ?? [];
+      list.push(to);
+      next.set(from, list);
+    }
+    const seen = new Set<string>([id]);
+    const stack = [...(next.get(id) ?? [])];
+    while (stack.length > 0) {
+      const n = stack.pop()!;
+      if (seen.has(n)) continue;
+      seen.add(n);
+      stack.push(...(next.get(n) ?? []));
+    }
+    return seen;
+  };
+  const up = walk("up");
+  const down = walk("down");
+  const edges = new Set<string>();
+  for (const e of model.edges)
+    if (
+      (up.has(e.source) && up.has(e.target)) ||
+      (down.has(e.source) && down.has(e.target))
+    )
+      edges.add(e.id);
+  return { nodes: new Set([...up, ...down]), edges };
 }

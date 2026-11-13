@@ -4,6 +4,14 @@ import {
   FrequencyThresholds,
 } from "./dependency-map-chart-types";
 import {
+  Resolved,
+  buildInventory,
+  natId,
+  nodesId,
+  serviceIdOf,
+} from "./resolve";
+import { ResolvedSample, StitchStats, resolveSamples, stitch } from "./stitch";
+import {
   HaType,
   InstanceRole,
   Mapping,
@@ -11,6 +19,23 @@ import {
   isCidr,
   isIp,
 } from "./mapping";
+
+/**
+ * What OBI's Kubernetes decoration says one side of a flow is. `type` is OBI's k8s.*.type: "Pod",
+ * "Service", "Node", ...; `owner` the top owner (Deployment, StatefulSet, DaemonSet, ...).
+ */
+export interface K8sRef {
+  type: string;
+  cluster?: string;
+  namespace?: string;
+  /** Pod, Service or node name. */
+  name?: string;
+  owner?: string;
+  ownerType?: string;
+  /** The node a pod runs on. */
+  node?: string;
+  nodeIp?: string;
+}
 
 /** One caller → callee connection as the collectors saw it, before it is mapped to services. */
 export interface EdgeSample {
@@ -29,6 +54,11 @@ export interface EdgeSample {
   bytes?: number;
   /** Unix seconds of the last sighting. */
   lastSeen: number;
+  srcK8s?: K8sRef;
+  dstK8s?: K8sRef;
+  /** OBI's named range (network.cidrs) each side is in. */
+  srcCidr?: string;
+  dstCidr?: string;
 }
 
 export type NodeKind = "internal" | "external" | "unknown";
@@ -37,6 +67,28 @@ export interface Instance {
   host: string;
   ip: string;
   role?: InstanceRole;
+  /** Kubernetes: the node a pod runs on (a node's own instance carries its own name). */
+  node?: string;
+}
+
+/** Where a map node sits on the Kubernetes side of the estate. */
+export interface K8sPlace {
+  cluster: string;
+  /**
+   * workload: pods grouped by namespace and workload; service: a Service address no workload was seen
+   * behind; nodes: the cluster's nodes themselves; nat: SNATed traffic of one node whose pod is unknown.
+   */
+  type: "workload" | "service" | "nodes" | "nat";
+  namespace?: string;
+  workload?: string;
+  /** nat: the node the traffic left. */
+  node?: string;
+}
+
+export interface ClusterInfo {
+  name: string;
+  nodes: Array<{ name: string; ip: string }>;
+  egressIps?: string[];
 }
 
 export interface ServiceNode {
@@ -53,6 +105,9 @@ export interface ServiceNode {
   /** Load as % of the total capacity of all instances. */
   load?: number;
   process?: string;
+  k8s?: K8sPlace;
+  /** Kubernetes: desired replicas, when the mapping gives them; HA is judged against these. */
+  replicas?: number;
 }
 
 export interface DepEdge {
@@ -72,6 +127,8 @@ export interface DepEdge {
   /** Caller instances that only ever connected to one instance of an HA callee: caller host → callee host. */
   pins: Record<string, string>;
   processes: string[];
+  /** OBI's named ranges (network.cidrs) the connection crosses, as "src -> dst"; empty when unknown. */
+  crosses: string[];
 }
 
 export interface DepModel {
@@ -79,6 +136,10 @@ export interface DepModel {
   edges: DepEdge[];
   byId: Map<string, ServiceNode>;
   windowHours: number;
+  /** Kubernetes clusters, with node addresses (for firewall rules across the cluster boundary). */
+  clusters?: Map<string, ClusterInfo>;
+  /** What the stitching folded or kept as "pod unknown" (see stitch.ts). */
+  stitch?: StitchStats;
 }
 
 export const VIP = "vip";
@@ -133,14 +194,20 @@ function externalMatches(
 
 interface Endpoint {
   node: ServiceNode;
-  /** Instance host, or VIP. */
+  /** Instance host, VIP, or (Kubernetes) the pod or node name. */
   instance: string;
 }
+
+/** Pods not seen for this long before the newest sample are left out of the instances. */
+export const POD_RECENT_SECONDS = 2 * 3600;
 
 /**
  * Turns collector samples into the service graph: IPs become instances of mapped services, VIPs become
  * the service itself, matches of `external` become external nodes, and anything else an unknown node
- * per IP. Edges between instances of the same service (replication, cluster traffic) are dropped.
+ * per IP. Kubernetes endpoints are resolved and stitched first (resolve.ts, stitch.ts): pods become
+ * instances of their workload, NodePorts and LoadBalancer addresses lead to the workload behind them,
+ * and SNATed traffic no pod explains comes from "via node X (NAT, pod unknown)". Edges between
+ * instances of the same service (replication, cluster traffic) are dropped.
  */
 export function buildModel(
   mapping: Mapping,
@@ -179,6 +246,164 @@ export function buildModel(
     for (const i of node.instances) byIp.set(i.ip, { node, instance: i.host });
     if (s.vip) byIp.set(s.vip, { node, instance: VIP });
   }
+
+  // Kubernetes: inventory, stitching, the mapped workloads, the clusters.
+  const inv = buildInventory(mapping, [...samples, ...(options.volume ?? [])]);
+  const stitched = stitch(mapping, inv, samples);
+  const clusters = new Map<string, ClusterInfo>();
+  const clusterNames = new Set<string>([
+    ...inv.nodeNames.keys(),
+    ...inv.clusters.keys(),
+  ]);
+  for (const c of clusterNames) {
+    const mapped = inv.clusters.get(c);
+    clusters.set(c, {
+      name: c,
+      nodes: [...(inv.nodeNames.get(c) ?? [])].sort().map((n) => ({
+        name: n,
+        ip: inv.nodeIp.get(n) ?? "",
+      })),
+      egressIps: mapped?.egressIps,
+    });
+  }
+  for (const w of mapping.kubernetes?.services ?? []) {
+    const cluster = w.cluster ?? inv.defaultCluster;
+    const node = add({
+      id: w.id,
+      name: w.name ?? w.workload ?? w.id,
+      owner: w.owner,
+      wave: 0,
+      kind: "internal",
+      ha: w.ha ?? ((w.replicas ?? 1) > 1 ? "active-active" : "single"),
+      instances: [],
+      vip: w.loadBalancerIp,
+      minUp: w.minUp ?? 1,
+      load: options.loads?.[w.id] ?? w.load,
+      process: w.process,
+      k8s: {
+        cluster,
+        type: "workload",
+        namespace: w.namespace,
+        workload: w.workload ?? w.id,
+      },
+      replicas: w.replicas,
+    });
+    if (w.loadBalancerIp) byIp.set(w.loadBalancerIp, { node, instance: VIP });
+  }
+
+  // Pods seen recently are the instances of their workload.
+  const newest = samples.reduce((m, s) => Math.max(m, s.lastSeen), 0);
+  const podSeen = new Map<string, { ip: string; lastSeen: number }>();
+  for (const r of stitched.samples)
+    for (const [side, ip] of [
+      [r.src, r.sample.src],
+      [r.dst, r.sample.dst],
+    ] as const)
+      if (side.kind === "pod") {
+        const cur = podSeen.get(side.pod);
+        if (!cur || cur.lastSeen < r.sample.lastSeen)
+          podSeen.set(side.pod, { ip, lastSeen: r.sample.lastSeen });
+      }
+
+  const ensureK8s = (
+    id: string,
+    name: string,
+    place: K8sPlace,
+    ha: HaType = "single",
+  ): ServiceNode =>
+    byId.get(id) ??
+    add({
+      id,
+      name,
+      wave: 0,
+      kind: "internal",
+      ha,
+      instances: [],
+      minUp: 1,
+      k8s: place,
+    });
+  const nodeInstances = (cluster: string): Instance[] =>
+    (clusters.get(cluster)?.nodes ?? []).map((n) => ({
+      host: n.name,
+      ip: n.ip,
+      node: n.name,
+    }));
+
+  const k8sEndpoint = (r: Resolved, ip: string): Endpoint | undefined => {
+    switch (r.kind) {
+      case "pod": {
+        const id = serviceIdOf(mapping, inv, r)!;
+        const node = ensureK8s(id, r.workload, {
+          cluster: r.cluster,
+          type: "workload",
+          namespace: r.namespace,
+          workload: r.workload,
+        });
+        const seen = podSeen.get(r.pod);
+        if (
+          seen &&
+          seen.lastSeen >= newest - POD_RECENT_SECONDS &&
+          !node.instances.some((i) => i.host === r.pod)
+        ) {
+          node.instances.push({ host: r.pod, ip: seen.ip, node: r.node });
+          node.instances.sort((a, b) => (a.host < b.host ? -1 : 1));
+          if (
+            !node.replicas &&
+            node.instances.length > 1 &&
+            node.ha === "single"
+          )
+            node.ha = "active-active";
+        }
+        return { node, instance: r.pod };
+      }
+      case "service": {
+        const id = serviceIdOf(mapping, inv, r)!;
+        const node = ensureK8s(id, r.name, {
+          cluster: r.cluster,
+          type: byId.has(id) ? "workload" : "service",
+          namespace: r.namespace,
+          workload: r.name,
+        });
+        if (!node.vip) node.vip = ip;
+        return { node, instance: VIP };
+      }
+      case "nodeport": {
+        const node = byId.get(r.workload.id)!;
+        return { node, instance: r.node };
+      }
+      case "node": {
+        const node = ensureK8s(
+          nodesId(r.cluster),
+          `${r.cluster} nodes`,
+          { cluster: r.cluster, type: "nodes" },
+          "active-active",
+        );
+        if (node.instances.length === 0)
+          node.instances = nodeInstances(r.cluster);
+        return { node, instance: r.node };
+      }
+      case "nat": {
+        const node = ensureK8s(
+          natId(r.cluster, r.node),
+          `via node ${r.node} (NAT, pod unknown)`,
+          { cluster: r.cluster, type: "nat", node: r.node },
+        );
+        if (node.instances.length === 0)
+          node.instances = [
+            {
+              host: r.node,
+              ip:
+                clusters.get(r.cluster)?.nodes.find((n) => n.name === r.node)
+                  ?.ip ?? "",
+              node: r.node,
+            },
+          ];
+        return { node, instance: r.node };
+      }
+      default:
+        return undefined;
+    }
+  };
 
   const resolve = (ip: string, name?: string): Endpoint => {
     const known = byIp.get(ip);
@@ -227,18 +452,23 @@ export function buildModel(
     lastSeen: number;
     pairs: Map<string, Set<string>>;
     processes: Set<string>;
+    crosses: Set<string>;
   }
   const acc = new Map<string, Acc>();
-  const keyFor = (s: EdgeSample): [string, Endpoint, Endpoint] | undefined => {
-    const a = resolve(s.src);
-    const b = resolve(s.dst, s.dstName);
+  const keyFor = (
+    r: ResolvedSample,
+  ): [string, Endpoint, Endpoint] | undefined => {
+    const s = r.sample;
+    const a = k8sEndpoint(r.src, s.src) ?? resolve(s.src);
+    const b = k8sEndpoint(r.dst, s.dst) ?? resolve(s.dst, s.dstName);
     if (a.node.id === b.node.id) return undefined;
     return [`${a.node.id}\u0000${b.node.id}\u0000${s.port}`, a, b];
   };
 
-  for (const s of samples) {
+  for (const r of stitched.samples) {
+    const s = r.sample;
     if (!s.src || !s.dst || !Number.isFinite(s.port)) continue;
-    const k = keyFor(s);
+    const k = keyFor(r);
     if (!k) continue;
     const [key, a, b] = k;
     let e = acc.get(key);
@@ -253,6 +483,7 @@ export function buildModel(
         lastSeen: 0,
         pairs: new Map(),
         processes: new Set(),
+        crosses: new Set(),
       };
       acc.set(key, e);
     }
@@ -263,14 +494,17 @@ export function buildModel(
     }
     e.lastSeen = Math.max(e.lastSeen, s.lastSeen);
     if (s.srcProcess) e.processes.add(s.srcProcess);
+    if (s.srcCidr || s.dstCidr)
+      e.crosses.add(`${s.srcCidr || "?"} -> ${s.dstCidr || "?"}`);
     const set = e.pairs.get(a.instance) ?? new Set<string>();
     set.add(b.instance);
     e.pairs.set(a.instance, set);
   }
-  for (const s of options.volume ?? []) {
-    const k = keyFor(s);
+  for (const r of resolveSamples(mapping, inv, options.volume ?? [])) {
+    const k = keyFor(r);
     if (!k) continue;
     const e = acc.get(k[0]);
+    const s = r.sample;
     if (!e || s.bytes === undefined || !Number.isFinite(s.bytes)) continue;
     if (!e.hasBytes) e.bytes = 0;
     e.bytes += s.bytes;
@@ -286,15 +520,7 @@ export function buildModel(
     const pins: Record<string, string> = {};
     for (const [caller, callees] of e.pairs) {
       pairs[caller] = [...callees].sort();
-      // Hard-wired: an HA service, and this caller only ever reached one of its members, never the VIP.
-      if (
-        target.kind === "internal" &&
-        target.ha !== "single" &&
-        target.instances.length > 1 &&
-        callees.size === 1 &&
-        !callees.has(VIP)
-      )
-        pins[caller] = [...callees][0]!;
+      if (pinned(target, callees, clusters)) pins[caller] = [...callees][0]!;
     }
     edges.push({
       id: `${e.source}->${e.target}:${e.port}`,
@@ -309,10 +535,46 @@ export function buildModel(
       pairs,
       pins,
       processes: [...e.processes].sort(),
+      crosses: [...e.crosses].sort(),
     });
   }
   edges.sort((x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
-  return { nodes, edges, byId, windowHours: hours };
+  return {
+    nodes,
+    edges,
+    byId,
+    windowHours: hours,
+    clusters,
+    stitch: stitched.stats,
+  };
+}
+
+/**
+ * Hard-wired: an HA service, and this caller only ever reached one of its members, never the VIP. On
+ * Kubernetes only a node counts as a member here (a NodePort called on one node address): pods are
+ * picked by kube-proxy, so a caller reaching one pod is chance, not wiring, and a single-node cluster
+ * has nothing to fail over to.
+ */
+function pinned(
+  target: ServiceNode,
+  callees: Set<string>,
+  clusters: Map<string, ClusterInfo>,
+): boolean {
+  if (callees.size !== 1 || callees.has(VIP)) return false;
+  if (target.k8s) {
+    const nodes = clusters.get(target.k8s.cluster)?.nodes ?? [];
+    const callee = [...callees][0]!;
+    return (
+      target.k8s.type !== "nat" &&
+      nodes.length > 1 &&
+      nodes.some((n) => n.name === callee)
+    );
+  }
+  return (
+    target.kind === "internal" &&
+    target.ha !== "single" &&
+    target.instances.length > 1
+  );
 }
 
 /** Active-passive lists the primary first (role primary, else the first listed). */

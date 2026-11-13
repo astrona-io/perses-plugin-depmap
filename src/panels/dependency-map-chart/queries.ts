@@ -1,4 +1,4 @@
-import { EdgeSample } from "./model";
+import { EdgeSample, K8sRef } from "./model";
 
 /** Range queries run at one-hour steps: frequency is "in how many hours of the window was it seen". */
 export const STEP_SECONDS = 3600;
@@ -39,10 +39,34 @@ export interface MatrixSeries {
 /**
  * One sample per series. Labels are read so both collectors fit the same code:
  * - OBI: `src_address`, `dst_address`, `server_port` (or `dst_port`), `dst_name`; the value is bytes.
+ *   With Kubernetes decoration on, `k8s_{src,dst}_{type,namespace,name,owner_name,owner_type,node_name,
+ *   node_ip}` and `k8s_cluster_name` say which pod, Service or node each side is (see docs/metrics.md),
+ *   and `src_cidr` / `dst_cidr` which named range it is in.
  * - Fallback script: `src_ip`, `dst_ip`, `dst_port`, `src_process`, `direction`. Its value is 1 while a
  *   connection exists. On `direction="in"` the script saw an inbound connection: `dst_ip` is the remote
  *   client and `dst_port` the local listening port, so caller and callee are swapped.
  */
+function k8sRef(
+  m: Record<string, string>,
+  side: "src" | "dst",
+): K8sRef | undefined {
+  const type = m[`k8s_${side}_type`];
+  if (!type) return undefined;
+  const ref: K8sRef = { type };
+  const set = (key: keyof K8sRef, label: string): void => {
+    const v = m[label];
+    if (v) ref[key] = v;
+  };
+  set("cluster", "k8s_cluster_name");
+  set("namespace", `k8s_${side}_namespace`);
+  set("name", `k8s_${side}_name`);
+  set("owner", `k8s_${side}_owner_name`);
+  set("ownerType", `k8s_${side}_owner_type`);
+  set("node", `k8s_${side}_node_name`);
+  set("nodeIp", `k8s_${side}_node_ip`);
+  return ref;
+}
+
 export function seriesToSamples(
   series: MatrixSeries[],
   valueIsBytes: boolean,
@@ -66,7 +90,7 @@ export function seriesToSamples(
       lastSeen = Math.max(lastSeen, ts);
     }
     if (hours.size === 0) continue;
-    out.push({
+    const sample: EdgeSample = {
       src,
       dst,
       port,
@@ -75,7 +99,14 @@ export function seriesToSamples(
       hours: [...hours],
       bytes: valueIsBytes ? bytes : undefined,
       lastSeen,
-    });
+    };
+    const srcK8s = k8sRef(m, "src");
+    const dstK8s = k8sRef(m, "dst");
+    if (srcK8s) sample.srcK8s = srcK8s;
+    if (dstK8s) sample.dstK8s = dstK8s;
+    if (m.src_cidr) sample.srcCidr = m.src_cidr;
+    if (m.dst_cidr) sample.dstCidr = m.dst_cidr;
+    out.push(sample);
   }
   return out;
 }

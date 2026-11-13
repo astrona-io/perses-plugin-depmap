@@ -18,6 +18,9 @@ metrics:
 network:
   # socket_filter is the default; use it too when the host runs Cilium.
   source: socket_filter
+  # Without this OBI leaves server.port empty or 0 (port guessing is off by default since v0.7.0): OBI
+  # guesses client and server port with ordinal heuristics.
+  guess_ports: ordinal
   # Optional: name your ranges; they show up as src_cidr / dst_cidr.
   cidrs:
     - cidr: 10.0.0.0/8
@@ -36,3 +39,6 @@ attributes:
         - dst.address
         - server.port
         - dst.name
+        - src.cidr # names from network.cidrs above: which ranges a connection crosses
+        - dst.cidr
+        - obi.ip # the host that reported the flow

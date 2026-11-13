@@ -1,8 +1,9 @@
 # perses-plugin-depmap
 
 A [Perses](https://perses.dev) panel plugin, `DependencyMapChart`, for moving old, badly documented
-software out of a classic data centre. It draws what really talks to what, discovered from network
-traffic rather than documentation, and answers the questions a migration has to answer:
+software out of a classic data centre, including estates that are only partly on Kubernetes. It draws
+what really talks to what, discovered from network traffic rather than documentation, and answers the
+questions a migration has to answer:
 
 - What breaks if this server or service goes down, with its HA setup (primary/standby, active-active,
   quorum) taken into account?
@@ -11,10 +12,13 @@ traffic rather than documentation, and answers the questions a migration has to 
 - Which connections cross between the old data centre, the new VMs and outside once a wave moves,
   as firewall rules per instance?
 - Which dependencies are rare (the monthly batch job) or unknown (the IP nobody owns)?
+- In a hybrid estate: which old VMs call into the cluster, which pods call back out to old VMs, and
+  what is the whole path, VM to pod to VM?
 
 The data comes from Prometheus, through the upstream Prometheus datasource: network flow metrics from
 [OpenTelemetry eBPF Instrumentation](https://opentelemetry.io/docs/zero-code/obi/) (OBI) where it can
-run, and a small snapshot script everywhere else. The kit for both is in [collect/](collect/).
+run (on servers, on container hosts and as a DaemonSet on Kubernetes nodes), and a small snapshot
+script everywhere else. The kit for all of them is in [collect/](collect/).
 
 ![Dark theme, map mode: waves 1 to 3, what stays and what is outside in columns; hard-wired edges dotted; an unknown address flagged; firewall rules for wave 1 in the side panel](docs/images/map-dark.jpg)
 
@@ -25,12 +29,14 @@ run, and a small snapshot script everywhere else. The kit for both is in [collec
 | ![Light theme, map mode](docs/images/map-light.jpg) | ![Light theme, what-if mode](docs/images/what-if-light.jpg) |
 
 The screenshots come from the [dev/](dev/) stack: a made-up estate of twenty containers with 30 days
-of history, collected by the fallback script.
+of history, collected by the fallback script. The hybrid screenshots are further down, in
+[Hybrid estates](#hybrid-estates).
 
 ## Supported versions
 
 | Plugin | Perses | Status |
 | --- | --- | --- |
+| 0.2.x | v0.55.x | Tested with v0.55.1 |
 | 0.1.x | v0.55.x | Tested with v0.55.1 |
 
 Built against `@perses-dev/*` 0.55.1 and `percli` v0.55.1. Data collection was written against OBI
@@ -76,6 +82,9 @@ label and a symbol, not only a colour: `✕ down`, `↯ breaks`, `⇄ failing ov
 **Needs.** Click a service to light up everything it depends on, transitively: the set that must move
 with it or stay reachable from where it moves to.
 
+The map works from the keyboard: Tab into it and every service is offered as a button over the map;
+Enter or Space selects it, as a click would.
+
 The side panel (open by default on wide panels, behind **Show details** on narrow ones) has:
 
 - **Scenario:** counts (out, degraded or at risk, unaffected) and the affected services with reasons.
@@ -98,7 +107,7 @@ in [docs/metrics.md](docs/metrics.md).
 
 | Source | Metric | Where |
 | --- | --- | --- |
-| OBI network flows | `obi_network_flow_bytes_total` with `src_address`, `dst_address`, `server_port` | Linux with kernel 5.8+ (or RHEL 4.18+ with eBPF backports) and BTF, run as root |
+| OBI network flows | `obi_network_flow_bytes_total` with `src_address`, `dst_address`, `server_port`, and on Kubernetes nodes the `k8s_*` labels | Linux with kernel 5.8+ (or RHEL 4.18+ with eBPF backports) and BTF, run as root: on the server, in a privileged container, or as a DaemonSet |
 | Snapshot script | `depmap_connection_seen` with `src_host`, `src_ip`, `src_process`, `dst_ip`, `dst_port`, `direction` | Any Linux with `ss`, or Windows with PowerShell 5+, through the node_exporter / windows_exporter textfile collector |
 
 The panel runs range queries with a one-hour step over its window (30 days by default). An edge's
@@ -134,6 +143,33 @@ external:
 An address in the traffic that matches no instance, VIP or external is drawn as an unknown node with
 its IP. Mistakes in the mapping are listed in the panel with their path; the valid part still draws.
 
+An optional `kubernetes` section adds clusters and the services running in them. It has no pod
+addresses: OBI on the nodes reports every flow with the pod's namespace and workload, and services
+are matched on those, so pods can come and go. Mappings written for 0.1 stay valid.
+
+```yaml
+kubernetes:
+  clusters:
+    - name: example-cluster          # as OBI reports it (k8s_cluster_name)
+      nodes:                         # ip: the address the rest of the network sees
+        - { name: node-1, ip: 10.0.8.1 }
+        - { name: node-2, ip: 10.0.8.2 }
+      egressIps: [10.0.8.100]        # optional: pod traffic leaves through these, not the nodes
+      hideNamespaces: [kube-system]  # the default
+  services:
+    - id: orders
+      namespace: shop
+      workload: orders               # Deployment / StatefulSet / DaemonSet name or glob; default the id
+      services: [orders]             # Kubernetes Services in front of it; default the workload name
+      replicas: 3                    # HA: active-active over the desired replicas
+      minUp: 2                       # default 1
+      nodePorts: [30080]             # node:30080 from outside is a call to orders
+      loadBalancerIp: 10.0.8.200     # optional
+```
+
+Pods of workloads the mapping does not name still appear, one node per workload, named after it and
+grouped with its namespace.
+
 ## Options
 
 | Option | Default | |
@@ -157,33 +193,78 @@ its IP. Mistakes in the mapping are listed in the panel with their path; the val
 
 Every option is in the panel editor. Variables (`$var`) are expanded in the queries.
 
+## Hybrid estates
+
+Few old estates are all VMs any more. Part of it already runs on Kubernetes, and the paths that matter
+cross the boundary: an old VM calls a NodePort, the pod behind it calls the Oracle server on another
+VM. depmap draws that as one connected path.
+
+![Dark theme, map mode with orders selected: lb, api, portal and billing on VMs lead into the orders workload in the Kubernetes lane, which calls the Oracle VIP and the bank API back outside the cluster](docs/images/hybrid-dark.jpg)
+
+| Light theme, hybrid hop chain |
+| --- |
+| ![Light theme, the same hop chain](docs/images/hybrid-light.jpg) |
+
+- **A Kubernetes lane** per cluster sits between the waves and what stays, because that is where the
+  chains cross it. Workloads are grouped by namespace; each node of the cluster is an instance of a
+  "nodes" group, so you can take one down.
+- **Hop chains.** Selecting a service highlights its callers and callees on both sides of the
+  boundary: `billing (VM) -> orders (pods, through node:30080) -> oracle (VM)`.
+- **Identity.** A pod address becomes its workload, a Service ClusterIP the workload behind it, a node
+  address its node, and anything else the VM or external from the mapping
+  ([DECISIONS.md](docs/DECISIONS.md#15-identity-resolution-across-the-cluster-boundary)).
+- **Egress SNAT.** Pods calling a VM leave with their node's address. OBI on the node sees both sides
+  of that, and the panel stitches them: the edge is drawn from the pod's workload. Traffic from a node
+  that no pod-side flow explains (no OBI there, or not at that time) is drawn honestly from
+  **via node X (NAT, pod unknown)**, not guessed
+  ([limits](docs/DECISIONS.md#16-stitching-snat-clusterip-and-nodeport-and-its-limits)).
+- **What if** across the boundary: taking a Kubernetes node down takes its pods with it. A workload
+  with fewer replicas than desired is degraded or down by its HA rule, with a note that Kubernetes
+  reschedules the pods. A VM pinned to one node's NodePort (it only ever called that node) breaks with
+  that node, even though the workload survives elsewhere.
+- **Firewall rules** treat a cluster as a zone of its own. Pods are never in a rule: traffic out of
+  the cluster comes from `egressIps`, else every node address (a pod can run on any node); traffic in
+  goes to the node addresses on the NodePort (only the pinned node for a pinned caller) or to the
+  LoadBalancer address.
+
 ## Map your legacy estate in 30 days
 
 1. **Day 1: install the collectors.** On every Linux server whose kernel allows it, install OBI with
-   `collect/obi/install.sh` (as root; it checks the kernel and stops if OBI cannot run). Everywhere
-   else, install the snapshot script with its systemd timer, cron entry or Windows scheduled task.
-   Scrape them all from one Prometheus with at least 35 days of retention. Details:
-   [collect/README.md](collect/README.md).
+   `collect/obi/install.sh` (as root; it checks the kernel and stops if OBI cannot run). On container
+   hosts, run OBI as a privileged container with the compose example. On Kubernetes, apply the
+   DaemonSet: `kubectl apply -k collect/kubernetes/obi`, after setting the cluster name and your
+   ranges in its `config.yaml`. Everywhere else, install the snapshot script with its systemd timer,
+   cron entry or Windows scheduled task. Scrape them all from one Prometheus with at least 35 days of
+   retention. Details: [collect/README.md](collect/README.md).
 2. **Day 1: add the panel.** Install the plugin (below), add a **Dependency Map** panel with the
-   Prometheus datasource and an empty mapping. Within minutes it shows unknown nodes, one per IP.
-   Check that every server you know appears; a missing one has no working collector.
+   Prometheus datasource and an empty mapping. Within minutes it shows unknown nodes, one per IP, and
+   one node per Kubernetes workload. Check that every server you know appears; a missing one has
+   no working collector.
 3. **Week 1: write the mapping.** Start from `collect/mapping.example.yaml`. List services with their
    instances, owners and HA type. Every IP still shown as unknown is a question for someone: find its
-   owner and add it as a service or an external. Leave `wave` at 0 for now.
-4. **Wait past a month-end.** Monthly and quarterly jobs only show up when they run. Keep the window at
+   owner and add it as a service or an external. Add each cluster with its node names and the address
+   each node has on the network the VMs see, and name the workloads that matter, with their desired
+   replicas and NodePorts. Leave `wave` at 0 for now.
+4. **Week 1: check the boundary.** Every **via node X (NAT, pod unknown)** node is pod traffic that
+   OBI did not see from the pod side: that node has no OBI, or it was not running then. Fix the
+   collector, then wait an hour. An address on a NodePort that is still unknown means the port is
+   missing from `nodePorts`.
+5. **Wait past a month-end.** Monthly and quarterly jobs only show up when they run. Keep the window at
    30 days and check again on the 2nd of the month: new dashed edges are the jobs nobody mentioned.
-5. **Read the map.** In **What if**, open **Lose one server**: every entry is a single point of
-   failure. The hard-wired clients list shows callers that skip the VIP; fix their configuration
-   before the migration or they will break when their node moves. **Easy to miss** collects the rare
-   edges and the addresses without an owner.
-6. **Plan the waves.** Click a service, use **Needs** to see what must move with it, and set its wave
+6. **Read the map.** In **What if**, open **Lose one server**: every entry is a single point of
+   failure, Kubernetes nodes included. The hard-wired clients list shows callers that skip the VIP or
+   call one node's NodePort; fix their configuration before the migration or they will break when
+   their node moves. **Easy to miss** collects the rare edges and the addresses without an owner.
+7. **Plan the waves.** Click a service, use **Needs** to see what must move with it, and set its wave
    in the details. The columns move live. When the plan holds, **Copy updated mapping** and paste it
    into the panel settings, so the plan is saved with the dashboard.
-7. **Export the firewall rules.** Pick a wave in **Firewall rules**: the list is every connection that
-   crosses zones once it moves, per instance. Copy it into the change request. Repeat per wave.
-8. **Remove the collectors** after the migration: `collect/obi/install.sh --remove`, and the removal
-   steps for the script in [collect/README.md](collect/README.md). Nothing else was changed on the
-   servers.
+8. **Export the firewall rules.** Pick a wave in **Firewall rules**: the list is every connection that
+   crosses zones once it moves, per instance, the cluster boundary included (node or egress addresses
+   as sources, NodePorts and LoadBalancer addresses as destinations). Copy it into the change request.
+   Repeat per wave.
+9. **Remove the collectors** after the migration: `collect/obi/install.sh --remove`,
+   `kubectl delete -k collect/kubernetes/obi`, and the removal steps for the container and the script
+   in [collect/README.md](collect/README.md). Nothing else was changed on the servers.
 
 ## Try it locally
 
@@ -203,15 +284,14 @@ It contains the cases the panel is for:
   seconds after start-up;
 - an unknown address (`10.1.7.22`) that the Oracle server calls every night.
 
-**The dev stack collects with the fallback script, not OBI.** OBI needs to create eBPF maps, and a
-rootless podman container cannot, even on a kernel with BTF (details in
-[docs/DECISIONS.md](docs/DECISIONS.md#3-obi-in-dev-not-possible-under-rootless-podman-the-fallback-script-runs-instead)).
-The OBI side of the panel is covered by unit tests.
+**The VMs collect with the fallback script, not OBI.** OBI needs to create eBPF maps, and a rootless
+podman container cannot, even on a kernel with BTF (details in
+[docs/DECISIONS.md](docs/DECISIONS.md#3-obi-in-dev-rootless-podman-cannot-the-podman-machine-can)).
 
 ```bash
 npm ci
-percli plugin build                    # writes DepMap-0.1.0.tar.gz
-cp DepMap-0.1.0.tar.gz dev/archive/
+percli plugin build                    # writes DepMap-0.2.0.tar.gz
+cp DepMap-0.2.0.tar.gz dev/archive/
 cd dev
 podman compose up -d --build           # or docker compose
 ```
@@ -221,6 +301,33 @@ Open <http://localhost:18087/projects/demo/dashboards/dependency-map>. Prometheu
 
 The live part of the history runs on the fast clock, so the most recent hours look busier than they
 are; the month before it was backfilled at normal speed.
+
+### The hybrid estate
+
+`dev/hybrid.sh up` adds a three-node [kind](https://kind.sigs.k8s.io) cluster to the same stack. Its
+nodes join the old data centre's network as `10.1.8.10` to `10.1.8.12`. Namespace `shop` runs
+`orders` (two replicas, NodePort 30080) and `pricing`; orders calls pricing through its Service, the
+Oracle VIP and the bank API. Billing (`app03`, a VM) calls the orders NodePort on `10.1.8.12`. That
+gives the chain `lb -> api -> portal -> billing (VM) -> orders (pods) -> oracle (VM)`.
+
+```bash
+cd dev
+DEPMAP_KUBECONFIG=$PWD/.kubeconfig ./hybrid.sh up    # compose up, kind cluster, workloads, OBI, history
+./hybrid.sh down                                     # cluster, OBI and the compose stack with its data
+```
+
+Needs `kind`, `kubectl` and node.js. Settings: `COMPOSE` (default `podman compose`),
+`KIND_EXPERIMENTAL_PROVIDER` (default `podman`), `DEPMAP_KUBECONFIG` (default `dev/.kubeconfig`; your
+own kubeconfig is never touched) and `DEPMAP_OBI=daemonset|machine`.
+
+What is real and what is synthetic:
+
+| Part | |
+| --- | --- |
+| OBI on the kind nodes | **Real.** OBI v1.0.0 with Kubernetes metadata, the config from `collect/kubernetes/obi`. With a rootful runtime it is that DaemonSet. Under rootless podman it cannot create eBPF maps, so `hybrid.sh` runs the same image rootful inside the podman machine, in each node's network namespace: what a host-network DaemonSet sees |
+| Pod to Service, pod to pod, pod to VM, node SNAT, VM to NodePort | **Seen live** by that OBI: the pod side and the SNATed node side of the Oracle and bank calls, the ClusterIP call and its DNAT twin, and `app03 -> 10.1.8.12:30080` on worker2 |
+| 30 days of Kubernetes history | **Synthetic** (`dev/backfill-k8s.mjs`), written with the label sets OBI really reported. It includes two weeks before OBI was "installed", where only the database's fallback script saw the nodes connect: those show as NAT, pod unknown |
+| The VMs | Fallback script, as above. Its one-minute snapshot misses billing's short NodePort connections; that edge's history comes from the backfill |
 
 ## Install into Perses
 
@@ -235,16 +342,16 @@ Download `DepMap-<version>.tar.gz` from the
 Perses can read, and add that directory to the config:
 
 ```bash
-curl -fLO https://github.com/astrona-io/perses-plugin-depmap/releases/download/v0.1.0/DepMap-0.1.0.tar.gz
-curl -fLO https://github.com/astrona-io/perses-plugin-depmap/releases/download/v0.1.0/DepMap-0.1.0.tar.gz.sha256
-sha256sum -c DepMap-0.1.0.tar.gz.sha256
+curl -fLO https://github.com/astrona-io/perses-plugin-depmap/releases/download/v0.2.0/DepMap-0.2.0.tar.gz
+curl -fLO https://github.com/astrona-io/perses-plugin-depmap/releases/download/v0.2.0/DepMap-0.2.0.tar.gz.sha256
+sha256sum -c DepMap-0.2.0.tar.gz.sha256
 ```
 
 ```yaml
 plugin:
   archive_paths:
     - /etc/perses/plugins-archive # plugins bundled with Perses
-    - /etc/perses/plugins-archive-depmap # put DepMap-0.1.0.tar.gz here
+    - /etc/perses/plugins-archive-depmap # put DepMap-0.2.0.tar.gz here
 ```
 
 ### Option B: Kubernetes image volume
@@ -260,7 +367,7 @@ linux/amd64 and linux/arm64. Mount it into the Perses pod as an
 volumes:
   - name: depmap-plugin
     image:
-      reference: ghcr.io/astrona-io/perses-plugin-depmap:v0.1.0
+      reference: ghcr.io/astrona-io/perses-plugin-depmap:v0.2.0
       pullPolicy: IfNotPresent
 containers:
   - name: perses
@@ -283,7 +390,7 @@ Copy the archive into the directory of bundled plugins. No config change is need
 
 ```dockerfile
 FROM persesdev/perses:v0.55.1
-COPY DepMap-0.1.0.tar.gz /etc/perses/plugins-archive/
+COPY DepMap-0.2.0.tar.gz /etc/perses/plugins-archive/
 ```
 
 ## Development

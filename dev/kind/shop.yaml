@@ -1,0 +1,120 @@
+# The workloads of the example estate's Kubernetes half (namespace shop):
+#   orders   2 replicas, one per worker; NodePort 30080 for the old data centre (billing calls it on
+#            one worker's address: hard-wired). Calls pricing through its Service, the oracle VIP in
+#            the old data centre (leaves the cluster SNATed to the node address) and the bank API.
+#   pricing  2 replicas behind a ClusterIP Service.
+# Every pod is the dev server image (socat): it listens on LISTEN and keeps one connection open to
+# each host:port in CALLS, writing a line every 5 s and reconnecting when it drops. Real TCP, so OBI
+# sees real flows (an idle connection sends no packets, so it would be invisible).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: shop
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: workload
+  namespace: shop
+data:
+  run.sh: |
+    set -u
+    socat -u "TCP-LISTEN:${LISTEN},fork,reuseaddr" OPEN:/dev/null &
+    sleep 3
+    for c in ${CALLS:-}; do
+      (while :; do
+        (while :; do echo depmap; sleep 5; done) | socat -u STDIN "TCP:${c},connect-timeout=3" 2>/dev/null
+        sleep 2
+      done) &
+    done
+    wait
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders
+  namespace: shop
+spec:
+  replicas: 2
+  strategy: # one pod per worker: replace in place, never surge
+    rollingUpdate: { maxSurge: 0, maxUnavailable: 1 }
+  selector:
+    matchLabels: { app: orders }
+  template:
+    metadata:
+      labels: { app: orders }
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels: { app: orders }
+      containers:
+        - name: orders
+          image: localhost/perses-plugin-depmap-server:dev
+          imagePullPolicy: Never
+          command: ["/bin/bash", "/run/workload/run.sh"]
+          env:
+            - { name: LISTEN, value: "8080" }
+            - { name: CALLS, value: "pricing.shop.svc.cluster.local:80 10.1.2.10:1521 198.51.100.43:443" }
+          volumeMounts:
+            - { name: workload, mountPath: /run/workload }
+      volumes:
+        - name: workload
+          configMap: { name: workload }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orders
+  namespace: shop
+spec:
+  type: NodePort
+  selector: { app: orders }
+  ports:
+    - { port: 80, targetPort: 8080, nodePort: 30080 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pricing
+  namespace: shop
+spec:
+  replicas: 2
+  strategy: # one pod per worker: replace in place, never surge
+    rollingUpdate: { maxSurge: 0, maxUnavailable: 1 }
+  selector:
+    matchLabels: { app: pricing }
+  template:
+    metadata:
+      labels: { app: pricing }
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels: { app: pricing }
+      containers:
+        - name: pricing
+          image: localhost/perses-plugin-depmap-server:dev
+          imagePullPolicy: Never
+          command: ["/bin/bash", "/run/workload/run.sh"]
+          env:
+            - { name: LISTEN, value: "8080" }
+          volumeMounts:
+            - { name: workload, mountPath: /run/workload }
+      volumes:
+        - name: workload
+          configMap: { name: workload }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pricing
+  namespace: shop
+spec:
+  selector: { app: pricing }
+  ports:
+    - { port: 80, targetPort: 8080 }

@@ -40,6 +40,7 @@ function edge(
     pairs: {},
     pins,
     processes: [],
+    crosses: [],
   };
 }
 
@@ -417,9 +418,14 @@ describe("lose one server", () => {
     expect(
       hardWiredClients(m).map((c) => `${c.callerHost}->${c.calleeHost}`),
     ).toEqual(
-      expect.arrayContaining(["win05->db01", "app01->ldap01", "app04->ldap01"]),
+      expect.arrayContaining([
+        "win05->db01",
+        "app01->ldap01",
+        "app04->ldap01",
+        "app03->perses-plugin-depmap-worker2",
+      ]),
     );
-    expect(hardWiredClients(m)).toHaveLength(3);
+    expect(hardWiredClients(m)).toHaveLength(4);
   });
 });
 
@@ -434,6 +440,7 @@ describe("needsOf", () => {
         "ldap",
         "nfs",
         "oracle",
+        "orders",
         "mq",
         "ext:bank-api.example.com",
         "ip:10.1.7.22",

@@ -15,7 +15,7 @@ const dashboard = {
   kind: "Dashboard",
   metadata: { name: "dependency-map", project: "demo" },
   spec: {
-    display: { name: "Dependency map: old data centre" },
+    display: { name: "Dependency map: old data centre and Kubernetes" },
     duration: "30d",
     variables: [],
     panels: {
@@ -25,7 +25,7 @@ const dashboard = {
           display: {
             name: "Who talks to whom",
             description:
-              "Connections seen over the last 30 days, by migration wave. Click a service for its instances, calls and firewall rules; switch to What if to take servers down.",
+              "Connections seen over the last 30 days, by migration wave, with the Kubernetes cluster in its own lane. Click a service for its instances, calls, the path through it and firewall rules; switch to What if to take servers or nodes down.",
           },
           plugin: {
             kind: "DependencyMapChart",
@@ -43,6 +43,7 @@ const dashboard = {
                 { name: "Primary DB lost", down: ["db01"] },
                 { name: "One portal node", down: ["app01"] },
                 { name: "NFS lost", down: ["nfs01"] },
+                { name: "Kubernetes node lost", down: ["perses-plugin-depmap-worker2"] },
               ],
               linkTemplates: {
                 node: "https://cmdb.example.com/services/${service}",

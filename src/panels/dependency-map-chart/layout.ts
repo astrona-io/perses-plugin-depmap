@@ -1,8 +1,9 @@
 import { DepEdge, ServiceNode } from "./model";
 
 /**
- * Lanes left to right: one per migration wave (ascending), then the services that stay in the old data
- * centre, then external and unknown endpoints. Inside a lane, services are ordered by the barycenter of
+ * Lanes left to right: one per migration wave (ascending), then one per Kubernetes cluster, then the
+ * services that stay in the old data centre, then external and unknown endpoints. A Kubernetes lane sits
+ * between the waves and the old DC because that is where hybrid hop chains (VM -> pod -> VM) cross it. Inside a lane, services are ordered by the barycenter of
  * their neighbours so edges cross less; a lane with many services splits into sub-columns.
  *
  * Coordinates are abstract layout units; the panel scales them to pixels as a whole (see fitBox).
@@ -57,6 +58,7 @@ export interface Layout {
 }
 
 export function laneKeyOf(n: ServiceNode): string {
+  if (n.k8s) return `k8s:${n.k8s.cluster}`;
   if (n.kind !== "internal") return "ext";
   return n.wave > 0 ? `w${n.wave}` : "stay";
 }
@@ -72,7 +74,7 @@ export function laneSpecs(
   const waves = [
     ...new Set(
       nodes
-        .filter((n) => n.kind === "internal" && n.wave > 0)
+        .filter((n) => n.kind === "internal" && !n.k8s && n.wave > 0)
         .map((n) => n.wave),
     ),
   ].sort((a, b) => a - b);
@@ -80,6 +82,11 @@ export function laneSpecs(
     key: `w${w}`,
     label: labels.waveLabels[String(w)] ?? `Wave ${w}`,
   }));
+  const clusters = [
+    ...new Set(nodes.flatMap((n) => (n.k8s ? [n.k8s.cluster] : []))),
+  ].sort();
+  for (const c of clusters)
+    out.push({ key: `k8s:${c}`, label: `Kubernetes · ${c}` });
   if (nodes.some((n) => laneKeyOf(n) === "stay"))
     out.push({ key: "stay", label: labels.stayLabel });
   if (nodes.some((n) => laneKeyOf(n) === "ext"))

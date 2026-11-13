@@ -1,6 +1,9 @@
 import { ReactElement, useEffect, useRef } from "react";
 import { init, type ECharts, type EChartsOption } from "echarts";
 
+/** Pointer travel (px) between press and release above which a click is a pan, not a selection. */
+export const DRAG_PX = 4;
+
 interface GraphCanvasProps {
   option: object;
   theme: string | object;
@@ -43,7 +46,25 @@ export function GraphCanvas({
     const instance = init(ref.current, theme as never);
     chart.current = instance;
     let itemClicked = false;
+    // A pan ends with a click where the pointer is released. When that is on a node, ECharts reports a
+    // node click and the map selects something the user never meant to pick. A click counts only when
+    // the pointer moved less than DRAG_PX since it went down.
+    let down: { x: number; y: number } | undefined;
+    let dragged = false;
+    instance.getZr().on("mousedown", (e) => {
+      down = { x: e.offsetX, y: e.offsetY };
+      dragged = false;
+    });
+    instance.getZr().on("mouseup", (e) => {
+      if (down)
+        dragged = Math.hypot(e.offsetX - down.x, e.offsetY - down.y) > DRAG_PX;
+      down = undefined;
+    });
     instance.on("click", (params) => {
+      if (dragged) {
+        itemClicked = true;
+        return;
+      }
       if (params.dataType === "node") {
         itemClicked = true;
         handlers.current.onNodeClick((params.data as { id: string }).id);
@@ -55,8 +76,9 @@ export function GraphCanvas({
     });
     // zrender sees every click; ECharts' own click event fires first for items.
     instance.getZr().on("click", () => {
-      if (!itemClicked) handlers.current.onBlankClick();
+      if (!itemClicked && !dragged) handlers.current.onBlankClick();
       itemClicked = false;
+      dragged = false;
     });
     return () => {
       instance.dispose();

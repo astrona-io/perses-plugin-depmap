@@ -34,11 +34,12 @@ waves or firewall rules, which are the point of this panel. Nobody is building t
 so work went ahead. If the canvas panel grows a generic graph layer, depmap could later render through
 it.
 
-## 3. OBI in dev/: not possible under rootless podman, the fallback script runs instead
+## 3. OBI in dev/: rootless podman cannot, the podman machine can
 
 The spec asks for OBI "where the host kernel allows". The kernel allows it: the podman machine runs
 Linux 7.1.4 with BTF (`/sys/kernel/btf/vmlinux`). Rootless podman does not. OBI v1.0.0 started in a
-privileged container still failed to create its BPF maps:
+privileged rootless container, and as the DaemonSet on a kind cluster whose nodes are rootless podman
+containers, fails to create its BPF maps:
 
 ```
 setupNetO11y: can't start network metrics capture: resolving maps: failed to load shared map:
@@ -46,12 +47,20 @@ creating map: map create: operation not permitted (MEMLOCK may be too low, consi
 ```
 
 A rootless container cannot get `CAP_BPF`/`CAP_SYS_ADMIN` in the initial user namespace, and that is
-what map creation needs. So **the dev stack runs the fallback script on every fake server, not OBI**.
-The OBI code path (default query, label parsing, bytes per day) is covered by unit tests with OBI's
-documented label names, and `collect/obi/` is ready for real Linux servers, where it runs as root.
+what map creation needs.
 
-On a rootful Docker or podman host, OBI can be added to the stack; it was not, because the stack has
-to come up on a laptop without extra privileges.
+- **The VMs** (`dev/docker-compose.yaml`) run the fallback script, as in 0.1.
+- **The kind nodes** (0.2, `dev/hybrid.sh`): the same OBI image and config run rootful *inside the
+  podman machine*, one container per node, joined to that node's network namespace, with
+  `--privileged --pid host` and the `obi` ServiceAccount's token for Kubernetes metadata. That is what
+  a `hostNetwork` DaemonSet sees, and it works: the Kubernetes side of the dev estate is observed by
+  real OBI. With a rootful runtime (`DEPMAP_OBI=daemonset`), `hybrid.sh` uses the DaemonSet from
+  `collect/kubernetes/obi` unchanged. That path was not run here.
+- **History**: 30 days of Kubernetes flows cannot be waited for, so `dev/backfill-k8s.mjs` writes
+  synthetic history with the label sets OBI reported live. The README says which parts are real.
+
+Running the VMs' OBI the same way was not done: the VMs are 0.1's fallback demo, and the panel merges
+both sources anyway.
 
 ## 4. Process names come from the fallback script; OBI application metrics stay off
 
@@ -148,3 +157,114 @@ the README and `collect/README.md` say so.
 The spec names no Grafana equivalent panel, so there is no `migrate/` schema. Tempo is optional in the
 spec and not used in v1: network flows already give the edges, and traces would only add protocol
 detail for instrumented services.
+
+## 15. Identity resolution across the cluster boundary
+
+`resolve.ts`, pure and unit-tested. Every address in a flow is resolved, in this order:
+
+1. **OBI's Kubernetes labels on that side.** `Pod`: its workload (top owner) in its namespace, the
+   pod as an instance, its node. `Service`: the workload behind it (the mapped workload that lists the
+   Service, or the one named like it). `Node`: the cluster's node group.
+2. **Addresses learnt from the labels** of other samples in the window: a pod address seen decorated
+   once is that pod when it shows up undecorated (a VM's OBI or the fallback script sees pod
+   addresses without labels). Node addresses come from the mapping (`ip`, `addresses`) and from
+   `k8s_*_node_ip`.
+3. **Pod-range gateways.** Bridge CNIs (kindnet, flannel, the bridge plugin) SNAT hairpin and probe
+   traffic to the first address of the node's pod range. The inventory learns each node's `/24` from
+   its decorated pods and takes `x.y.z.1` as that node. A range shared by pods of two nodes, or one
+   seen only from host-network pods, is skipped. Only for addresses that are not decorated. A guess,
+   but a narrow one: without it every kubelet probe drew an unknown address.
+4. **NodePort and LoadBalancer.** A node address on a port in a workload's `nodePorts`, or its
+   `loadBalancerIp`, is a call to that workload, entering through that node.
+5. **The mapping** for everything else (instances, VIPs, externals), as in 0.1. Then unknown.
+
+Unmapped workloads are drawn under their own name and namespace (`k8s:<cluster>/<ns>/<workload>`), so
+a cluster with no mapping at all still shows its structure. Pods are instances only while seen in the
+last two hours of the window, so a rolled-out ReplicaSet does not leave stale pods behind.
+
+## 16. Stitching: SNAT, ClusterIP and NodePort, and its limits
+
+`stitch.ts`, pure and unit-tested. One connection crossing the cluster boundary shows up more than
+once, under different addresses:
+
+| Seen | Done |
+| --- | --- |
+| pod -> VM, and node -> VM (same node, same destination and port, same hour) | **Egress SNAT.** The node-side hours explained by a pod-side sample are dropped; the edge is drawn from the pod's workload |
+| node -> VM in hours no pod-side sample explains | Kept, from **`via node X (NAT, pod unknown)`** (`nat:<cluster>:<node>`), an honest node of its own, not a guess at the pod |
+| pod -> Service ClusterIP:port, and pod -> pod:targetPort | **DNAT.** The Service sample is dropped when the same caller reached a pod of the same workload in the same hour; otherwise kept, as an edge to the workload on the Service port |
+| VM -> node:nodePort | Kept: it names the client. Drawn as VM -> workload, through that node |
+| node -> pod inside the cluster | Dropped (kube-proxy's SNAT with `externalTrafficPolicy: Cluster`, and kubelet probes; they cannot be told apart and name no client) |
+| node <-> node, pod -> its own node, hidden namespaces | Dropped as plumbing |
+
+Limits:
+
+- **Granularity is one hour**, the query step. Two flows from the same node to the same address and
+  port in the same hour are taken to be one connection. When a pod and something on the node itself
+  (a host process) both call the same VM port in the same hour, the host process's traffic is folded
+  into the pod's edge.
+- **The VM side alone cannot be stitched.** A VM's fallback script sees `node -> VM`. Without OBI on
+  that node the pod is unknown; that is the NAT node.
+- **Inbound NodePort with `externalTrafficPolicy: Cluster`**: kube-proxy may forward to a pod on
+  another node. The panel draws VM -> workload, not VM -> pod; the node it entered is recorded (see
+  #17). With `Local`, the pod is on that node anyway.
+- **LoadBalancer**: a call to `loadBalancerIp` is a call to the workload. Which node the load balancer
+  picked is not visible from the flow; firewall rules list the LoadBalancer address.
+- **Ingress controllers** are workloads like any other: VM -> ingress controller -> backend shows as
+  two hops, which is what the network does.
+- **Egress gateways and cloud NAT**: with `egressIps` in the mapping, those addresses are the cluster
+  for firewall rules. Stitching across a separate egress gateway node works only when OBI runs on it.
+
+## 17. Pinned NodePort callers
+
+0.1 called a caller hard-wired when it only ever reached one member of an HA service. 0.2 applies the
+same rule to NodePorts: a VM that only ever called one node's NodePort (a hard-coded node address
+instead of a load balancer) is pinned to that node. In **What if**, that node down breaks the VM,
+even though the workload survives on the other nodes. Pod-to-pod traffic is never pinned: the
+Service picks the pod, so failover works.
+
+A node down takes its pods down with it. The workload is then judged by its HA rule against the
+desired `replicas` (missing pods count as down), and its reason notes that Kubernetes reschedules the
+pods (about five minutes after a node is lost, with default tolerations). The panel shows the
+moment after the loss, which is what a migration has to survive.
+
+## 18. Firewall rules at the cluster boundary
+
+A cluster is a zone of its own. Pods are never in a rule; their addresses change.
+
+- Out of the cluster: from the mapping's `egressIps`, else from **every node address**, because a pod
+  can run on any node. The NAT node: only its own node address.
+- Into the cluster: to every node address on the NodePort, or only the pinned node for a pinned
+  caller, and to the LoadBalancer address when there is one.
+- Inside the cluster: no rules; that is NetworkPolicy, not the data-centre firewall.
+
+## 19. Instance chip ids are per service
+
+ECharts needs unique node ids. 0.1 named instance chips `chip:<host>`. In a hybrid estate one node
+host appears as an instance of the cluster's node group and of its NAT node, and the duplicate id
+crashed the chart (`Cannot set properties of undefined (setting 'dataIndex')`). Chips are now
+`chip:<service>|<host>`; a click still takes the host down, so both chips go down together.
+
+## 20. dev/: what the hybrid estate adds to the mapping
+
+- `monitoring` (`mon01`, `10.1.0.9`): Prometheus scrapes OBI on the kind nodes over the old data
+  centre network, so that traffic is mapped instead of drawn as an unknown address.
+- `hideNamespaces: [kube-system, local-path-storage, depmap]`: kind's storage provisioner and the
+  collector itself are plumbing, like `kube-system`.
+
+## 21. OBI network attributes beyond flow edges
+
+Checked against the OBI v1.0.0 network metrics docs, as asked for 0.2. Used: `src.cidr`/`dst.cidr`
+(an edge lists the named ranges it crosses) and the Kubernetes attributes, node of each pod
+included. Not used: `iface` and `iface.direction` (optional, one series per interface per flow and
+every pod has its own veth; they tell the interface, not the zone), the inter-zone metric (computed
+from cloud availability-zone node labels, which an on-premises estate does not have). OBI's network
+metrics carry no TCP-level detail (retransmits, RTT). That is not enough for a separate network view,
+so there is none; details in [metrics.md](metrics.md).
+
+## 22. Default edge query: `max by`, not `sum by`
+
+With OBI on every node and on VMs, one flow is counted by more than one OBI (both ends of a pod-to-pod
+flow across nodes; the node and the VM for SNATed traffic). Summing doubled them. `max by` over the
+full label set keeps one count per distinct flow description; stitching then removes the remaining
+duplicates. Custom `queries.edge` from 0.1 keep working.
+

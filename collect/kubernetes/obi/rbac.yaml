@@ -1,0 +1,31 @@
+# What OBI needs to decorate flows with Kubernetes metadata (OBI docs, "Deploy OBI in Kubernetes"):
+# list and watch ReplicaSets (to find a pod's Deployment), Pods, Services and Nodes. Read-only.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: obi
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: depmap-obi
+rules:
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods", "services", "nodes"]
+    verbs: ["list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: depmap-obi
+subjects:
+  - kind: ServiceAccount
+    name: obi
+    namespace: depmap
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: depmap-obi

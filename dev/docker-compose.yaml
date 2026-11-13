@@ -3,8 +3,9 @@
 # starts with 30 days of backfilled history, and Perses with the plugin. Works with `podman compose`
 # and `docker compose`; see the README ("Try it locally").
 #
-# OBI is not used here: rootless podman cannot create the eBPF maps OBI needs (see docs/DECISIONS.md).
-# Every server runs collect/fallback/depmap-snapshot.sh instead, exactly as a real server would.
+# OBI is not used on the servers: rootless podman cannot create the eBPF maps OBI needs (see
+# docs/DECISIONS.md). Every server runs collect/fallback/depmap-snapshot.sh instead, exactly as a real
+# server would. dev/hybrid.sh adds the Kubernetes half (a kind cluster with OBI on its nodes).
 name: perses-plugin-depmap
 
 x-server: &server
@@ -291,7 +292,11 @@ services:
         condition: service_completed_successfully
       node-exporter:
         condition: service_started
-    networks: [mgmt]
+    networks:
+      mgmt: {}
+      # To scrape OBI on the Kubernetes nodes that dev/hybrid.sh attaches at 10.1.8.10-12.
+      olddc:
+        ipv4_address: 10.1.0.9
 
   perses:
     image: docker.io/persesdev/perses:v0.55.1
