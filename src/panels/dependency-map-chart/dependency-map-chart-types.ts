@@ -22,10 +22,8 @@ export const FREQUENCIES: Frequency[] = [
   "monthly",
 ];
 
-export type Mode = "map" | "failure" | "needs";
-
-/** Map mode: the estate drill-down (estate, cluster, machine, workload, places) or the migration lanes. */
-export type MapView = "estate" | "lanes";
+/** map: the estate drill-down; outage: "If unreachable", mark units as down and see the impact. */
+export type Mode = "map" | "outage";
 
 /** Rates are shown per second, minute or hour; `auto` picks per value. */
 export type RateUnit = "s" | "min" | "h" | "auto";
@@ -51,6 +49,7 @@ export interface QueryRoles {
   volume?: string;
 }
 
+/** Only `showExternal` is used since v0.4.0, when the lanes view was removed; the rest still loads. */
 export interface LaneOptions {
   /** Label per wave number, e.g. {"1": "Wave 1 (March)"}. */
   waveLabels?: Record<string, string>;
@@ -65,10 +64,11 @@ export interface LaneOptions {
 export interface LinkTemplates {
   /** Per node, e.g. `/projects/infra/dashboards/host?var-host=${host}`. */
   node?: string;
-  /** Per edge, e.g. a firewall request form with `${source}`, `${target}`, `${port}`. */
+  /** Ignored since v0.4.0: no view selects a single edge any more. */
   edge?: string;
 }
 
+/** Ignored since v0.4.0; kept so saved panels still load. */
 export interface Scenario {
   name: string;
   /** Instance hosts (or IPs of unknown nodes) to take down. */
@@ -91,12 +91,15 @@ export interface DependencyMapChartOptions {
   /** Frequencies shown when the panel opens. Default all. */
   edgeFilter?: Frequency[];
   linkTemplates?: LinkTemplates;
-  /** Preset failure scenarios. When empty, the worst single-server failures are offered. */
+  /** Ignored since v0.4.0: the outage view ranks every unit tried alone instead. */
   scenarios?: Scenario[];
-  /** Mode the panel opens in. Default `map`. */
-  defaultMode?: Mode;
-  /** View the map mode opens in. Default `estate`. */
-  defaultView?: MapView;
+  /**
+   * Mode the panel opens in. Default `map`. Panels saved before v0.4.0 may hold `failure` (opens as
+   * `outage`) or `needs` (opens as `map`).
+   */
+  defaultMode?: Mode | "failure" | "needs";
+  /** Ignored since v0.4.0, when the lanes view was removed. */
+  defaultView?: "estate" | "lanes";
   /** Unit rates open in. Default `s` (per second). */
   rateUnit?: RateUnit;
   /** Label holding the Kubernetes cluster name. Default `k8s_cluster_name`. */
@@ -134,23 +137,16 @@ export const DEFAULT_THRESHOLDS: FrequencyThresholds = {
   daily: 0.02,
   weekly: 0.004,
 };
-export const DEFAULT_STAY_LABEL = "Stays in old DC";
-export const DEFAULT_EXTERNAL_LABEL = "External / unknown";
 
 export interface ResolvedOptions {
   queries: Required<QueryRoles>;
   mapping: string;
   window: string;
   thresholds: FrequencyThresholds;
-  waveLabels: Record<string, string>;
-  stayLabel: string;
-  externalLabel: string;
   showExternal: boolean;
   edgeFilter: Frequency[];
   links: LinkTemplates;
-  scenarios: Scenario[];
   defaultMode: Mode;
-  defaultView: MapView;
   rateUnit: RateUnit;
   clusterLabel: string;
   clusterName: string;
@@ -171,18 +167,16 @@ export function resolveOptions(
     mapping: spec.mapping ?? "",
     window: spec.window ?? "",
     thresholds: { ...DEFAULT_THRESHOLDS, ...(spec.frequencyThresholds ?? {}) },
-    waveLabels: spec.lanes?.waveLabels ?? {},
-    stayLabel: spec.lanes?.stayLabel || DEFAULT_STAY_LABEL,
-    externalLabel: spec.lanes?.externalLabel || DEFAULT_EXTERNAL_LABEL,
     showExternal: spec.lanes?.showExternal ?? true,
     edgeFilter:
       spec.edgeFilter && spec.edgeFilter.length > 0
         ? spec.edgeFilter
         : [...FREQUENCIES],
     links: spec.linkTemplates ?? {},
-    scenarios: spec.scenarios ?? [],
-    defaultMode: spec.defaultMode ?? "map",
-    defaultView: spec.defaultView ?? "estate",
+    defaultMode:
+      spec.defaultMode === "outage" || spec.defaultMode === "failure"
+        ? "outage"
+        : "map",
     rateUnit: spec.rateUnit ?? "s",
     clusterLabel: spec.clusterLabel || DEFAULT_CLUSTER_LABEL,
     clusterName: spec.clusterName || DEFAULT_CLUSTER_NAME,

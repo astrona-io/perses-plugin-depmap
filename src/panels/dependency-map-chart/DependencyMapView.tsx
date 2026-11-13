@@ -1,7 +1,6 @@
-import { ReactElement, useCallback, useEffect, useMemo, useState } from "react";
+import { ReactElement, useEffect, useMemo, useState } from "react";
 import {
   Box,
-  Button,
   Checkbox,
   FormControlLabel,
   IconButton,
@@ -14,7 +13,6 @@ import {
 import {
   FREQUENCIES,
   Frequency,
-  MapView,
   Mode,
   RATE_UNITS,
   RateUnit,
@@ -22,45 +20,19 @@ import {
 } from "./dependency-map-chart-types";
 import { buildEstate } from "./estate";
 import { EstateView } from "./EstateView";
-import {
-  evaluateFailure,
-  hardWiredClients,
-  hopChains,
-  loseOneServer,
-  needsOf,
-} from "./failure";
-import {
-  firewallRulesForCluster,
-  firewallRulesForWave,
-  wavesOf,
-} from "./firewall";
 import { FREQUENCY_LABELS } from "./format";
-import {
-  buildOption,
-  fitBox,
-  Palette,
-  parseChipId,
-  STATE_LABELS,
-} from "./chart-option";
-import { GraphCanvas } from "./GraphCanvas";
-import { laneSpecs, layoutGraph } from "./layout";
-import { Mapping, updateWaves } from "./mapping";
+import { Mapping } from "./mapping";
 import { DepModel } from "./model";
-import { SidePanel } from "./SidePanel";
 
 export interface DependencyMapViewProps {
   model: DepModel;
   o: ResolvedOptions;
   /** The parsed mapping: places for the estate view. */
   mapping: Mapping;
-  /** The mapping text, for "Copy updated mapping". */
-  mappingText: string;
+  /** Lines of the mapping that could not be read; the rest still applies. */
   mappingErrors: string[];
-  palette: Palette;
-  echartsTheme: string | object;
   width: number;
   height: number;
-  nowSeconds: number;
   /** Which collectors returned data, shown in the toolbar. */
   sources?: { obi: boolean; fallback: boolean };
 }
@@ -75,60 +47,27 @@ const RATE_LABELS: Record<RateUnit, string> = {
 /** Below this panel width the side panel covers the map instead of sitting beside it. */
 export const NARROW = 720;
 
-async function copyText(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /**
- * The interactive panel body: toolbar, map and side panel. Pure on its inputs (no queries), so it is
- * rendered directly in tests.
+ * The interactive panel body: toolbar, then the estate view in map or "If unreachable" mode. Pure on
+ * its inputs (no queries), so it is rendered directly in tests.
  */
 export function DependencyMapView(props: DependencyMapViewProps): ReactElement {
-  const { o, palette, width, height, nowSeconds } = props;
+  const { o, model, width, height } = props;
   const [mode, setMode] = useState<Mode>(o.defaultMode);
-  const [mapView, setMapView] = useState<MapView>(o.defaultView);
   const [rateUnit, setRateUnit] = useState<RateUnit>(o.rateUnit);
   const [shown, setShown] = useState<Set<Frequency>>(
     () => new Set(o.edgeFilter),
   );
-  const [down, setDown] = useState<Set<string>>(() => new Set());
-  const [selectedNode, setSelectedNode] = useState<string | undefined>();
-  const [selectedEdge, setSelectedEdge] = useState<string | undefined>();
-  const [waveOverrides, setWaveOverrides] = useState<Record<string, number>>(
-    {},
-  );
   const narrow = width < NARROW;
   const [panelOpen, setPanelOpen] = useState(!narrow);
-  const [firewallScope, setFirewallScope] = useState("1");
 
   useEffect(() => setMode(o.defaultMode), [o.defaultMode]);
   useEffect(() => setShown(new Set(o.edgeFilter)), [o.edgeFilter]);
-  useEffect(() => setMapView(o.defaultView), [o.defaultView]);
   useEffect(() => setRateUnit(o.rateUnit), [o.rateUnit]);
-  const estateMode = mode === "map" && mapView === "estate";
 
-  // The model with any waves moved in the panel.
-  const model: DepModel = useMemo(() => {
-    if (Object.keys(waveOverrides).length === 0) return props.model;
-    const nodes = props.model.nodes.map((n) =>
-      n.id in waveOverrides ? { ...n, wave: waveOverrides[n.id]! } : n,
-    );
-    return {
-      ...props.model,
-      nodes,
-      byId: new Map(nodes.map((n) => [n.id, n])),
-    };
-  }, [props.model, waveOverrides]);
-
-  // Edges after the frequency filter; external nodes hidden when asked, and any external or unknown
-  // node left without edges.
+  // Edges after the frequency filter; external and unknown nodes dropped when asked.
   const view = useMemo(() => {
-    const hiddenIds = new Set(
+    const hidden = new Set(
       o.showExternal
         ? []
         : model.nodes.filter((n) => n.kind !== "internal").map((n) => n.id),
@@ -136,194 +75,19 @@ export function DependencyMapView(props: DependencyMapViewProps): ReactElement {
     const edges = model.edges.filter(
       (e) =>
         shown.has(e.frequency) &&
-        !hiddenIds.has(e.source) &&
-        !hiddenIds.has(e.target),
+        !hidden.has(e.source) &&
+        !hidden.has(e.target),
     );
-    const touched = new Set(edges.flatMap((e) => [e.source, e.target]));
-    const nodes = model.nodes.filter(
-      (n) => n.kind === "internal" || touched.has(n.id),
-    );
-    return {
-      model: {
-        ...model,
-        nodes,
-        edges,
-        byId: new Map(nodes.map((n) => [n.id, n])),
-      } as DepModel,
-      hiddenEdges: model.edges.length - edges.length,
-    };
+    return { edges, hiddenEdges: model.edges.length - edges.length };
   }, [model, shown, o.showExternal]);
 
   const estate = useMemo(
-    () => (estateMode ? buildEstate(model, props.mapping) : undefined),
-    [estateMode, model, props.mapping],
-  );
-
-  const failure = useMemo(
-    () =>
-      mode === "failure" ? evaluateFailure(view.model, [...down]) : undefined,
-    [mode, view.model, down],
-  );
-  const spofs = useMemo(
-    () => (mode === "failure" ? loseOneServer(view.model) : []),
-    [mode, view.model],
-  );
-  const hardWired = useMemo(() => hardWiredClients(model), [model]);
-  const needs = useMemo(
-    () =>
-      mode === "needs" && selectedNode
-        ? needsOf(view.model, selectedNode)
-        : undefined,
-    [mode, view.model, selectedNode],
-  );
-  const waves = useMemo(() => {
-    const ws = new Set([0, ...wavesOf(model), ...wavesOf(props.model)]);
-    const max = Math.max(...ws);
-    ws.add(max + 1);
-    return [...ws].sort((a, b) => a - b);
-  }, [model, props.model]);
-  const clusters = useMemo(
-    () =>
-      [
-        ...new Set(model.nodes.flatMap((n) => (n.k8s ? [n.k8s.cluster] : []))),
-      ].sort(),
-    [model],
-  );
-  const chain = useMemo(
-    () =>
-      mode === "map" && selectedNode
-        ? hopChains(view.model, selectedNode)
-        : undefined,
-    [mode, view.model, selectedNode],
-  );
-  // Firewall rules use every edge seen in the window, not just the filtered ones.
-  const firewall = useMemo(
-    () =>
-      firewallScope.startsWith("k8s:")
-        ? firewallRulesForCluster(model, firewallScope.slice(4))
-        : firewallRulesForWave(model, Number(firewallScope)),
-    [model, firewallScope],
-  );
-  // With no waves, the first cluster boundary is the useful default.
-  useEffect(() => {
-    if (
-      !firewallScope.startsWith("k8s:") &&
-      clusters.length > 0 &&
-      wavesOf(model).length === 0
-    )
-      setFirewallScope(`k8s:${clusters[0]}`);
-  }, [clusters, model, firewallScope]);
-
-  const layout = useMemo(
-    () =>
-      layoutGraph(
-        view.model.nodes,
-        view.model.edges,
-        laneSpecs(view.model.nodes, {
-          waveLabels: o.waveLabels,
-          stayLabel: o.stayLabel,
-          externalLabel: o.externalLabel,
-        }),
-      ),
-    [view.model, o.waveLabels, o.stayLabel, o.externalLabel],
+    () => buildEstate(model, props.mapping),
+    [model, props.mapping],
   );
 
   const panelW = Math.round(Math.min(380, Math.max(280, width * 0.3)));
-  const mapW = Math.max(100, panelOpen && !narrow ? width - panelW : width);
   const mapH = Math.max(100, height - TOOLBAR_H);
-  const option = useMemo(
-    () =>
-      buildOption({
-        model: view.model,
-        layout,
-        mode,
-        failure,
-        down,
-        selectedNode,
-        selectedEdge,
-        needs,
-        chain,
-        palette,
-        box: fitBox(layout, mapW, mapH),
-        nowSeconds,
-        rateUnit,
-      }),
-    [
-      view.model,
-      layout,
-      mode,
-      failure,
-      down,
-      selectedNode,
-      selectedEdge,
-      needs,
-      chain,
-      palette,
-      mapW,
-      mapH,
-      nowSeconds,
-      rateUnit,
-    ],
-  );
-
-  const toggleHost = useCallback((host: string) => {
-    setDown((cur) => {
-      const next = new Set(cur);
-      if (next.has(host)) next.delete(host);
-      else next.add(host);
-      return next;
-    });
-  }, []);
-
-  const onNodeClick = useCallback(
-    (id: string) => {
-      if (id.startsWith("chip:")) {
-        const { service, host } = parseChipId(id);
-        if (mode === "failure") toggleHost(host);
-        else {
-          setSelectedNode(service);
-          setSelectedEdge(undefined);
-        }
-        return;
-      }
-      if (
-        id.startsWith("lane:") ||
-        id.startsWith("port:") ||
-        id.startsWith("corner:")
-      )
-        return;
-      setSelectedNode((cur) => (cur === id ? undefined : id));
-      setSelectedEdge(undefined);
-      if (narrow) setPanelOpen(true);
-    },
-    [mode, toggleHost, narrow],
-  );
-  const onEdgeClick = useCallback(
-    (id: string) => {
-      setSelectedEdge((cur) => (cur === id ? undefined : id));
-      setSelectedNode(undefined);
-      if (narrow) setPanelOpen(true);
-    },
-    [narrow],
-  );
-  const onBlankClick = useCallback(() => {
-    setSelectedNode(undefined);
-    setSelectedEdge(undefined);
-  }, []);
-
-  const presets = useMemo(
-    () =>
-      o.scenarios.length > 0
-        ? o.scenarios
-        : spofs
-            .slice(0, 4)
-            .map((s) => ({ name: `${s.host} down`, down: [s.host] })),
-    [o.scenarios, spofs],
-  );
-
-  const changedWaves = Object.entries(waveOverrides).filter(
-    ([id, w]) => props.model.byId.get(id)?.wave !== w,
-  ).length;
 
   const source =
     props.sources?.obi && props.sources.fallback
@@ -367,37 +131,12 @@ export function DependencyMapView(props: DependencyMapViewProps): ReactElement {
             Map
           </ToggleButton>
           <ToggleButton
-            value="failure"
-            sx={{ textTransform: "none", py: 0.25 }}
+            value="outage"
+            sx={{ textTransform: "none", py: 0.25, whiteSpace: "nowrap" }}
           >
-            What if
-          </ToggleButton>
-          <ToggleButton value="needs" sx={{ textTransform: "none", py: 0.25 }}>
-            Needs
+            If unreachable
           </ToggleButton>
         </ToggleButtonGroup>
-        {mode === "map" ? (
-          <ToggleButtonGroup
-            size="small"
-            exclusive
-            value={mapView}
-            onChange={(_, v: MapView | null) => v && setMapView(v)}
-            aria-label="Map view"
-          >
-            <ToggleButton
-              value="estate"
-              sx={{ textTransform: "none", py: 0.25 }}
-            >
-              Estate
-            </ToggleButton>
-            <ToggleButton
-              value="lanes"
-              sx={{ textTransform: "none", py: 0.25 }}
-            >
-              Lanes
-            </ToggleButton>
-          </ToggleButtonGroup>
-        ) : null}
         {FREQUENCIES.map((f) => (
           <FormControlLabel
             key={f}
@@ -424,28 +163,6 @@ export function DependencyMapView(props: DependencyMapViewProps): ReactElement {
             label={FREQUENCY_LABELS[f]}
           />
         ))}
-        {mode === "failure"
-          ? presets.map((p) => (
-              <Button
-                key={p.name}
-                size="small"
-                variant="outlined"
-                sx={{ textTransform: "none", whiteSpace: "nowrap", py: 0.1 }}
-                onClick={() => setDown(new Set(p.down))}
-              >
-                {p.name}
-              </Button>
-            ))
-          : null}
-        {mode === "failure" && down.size > 0 ? (
-          <Button
-            size="small"
-            sx={{ whiteSpace: "nowrap" }}
-            onClick={() => setDown(new Set())}
-          >
-            Reset
-          </Button>
-        ) : null}
         <Box sx={{ flexGrow: 1 }} />
         <ToggleButtonGroup
           size="small"
@@ -464,16 +181,17 @@ export function DependencyMapView(props: DependencyMapViewProps): ReactElement {
             </ToggleButton>
           ))}
         </ToggleButtonGroup>
-        {mode === "failure" && failure ? (
-          <Typography
-            variant="body2"
-            sx={{ whiteSpace: "nowrap" }}
-            aria-live="polite"
-          >
-            <Box component="span" sx={{ color: "error.main" }}>
-              {STATE_LABELS.down} {failure.outages.length} out
-            </Box>
-          </Typography>
+        {props.mappingErrors.length > 0 ? (
+          <Tooltip title={props.mappingErrors.slice(0, 10).join("\n")}>
+            <Typography
+              variant="caption"
+              color="error"
+              sx={{ whiteSpace: "nowrap" }}
+            >
+              {props.mappingErrors.length} mapping error
+              {props.mappingErrors.length === 1 ? "" : "s"}
+            </Typography>
+          </Tooltip>
         ) : null}
         {view.hiddenEdges > 0 ? (
           <Typography
@@ -506,160 +224,20 @@ export function DependencyMapView(props: DependencyMapViewProps): ReactElement {
           </IconButton>
         </Tooltip>
       </Stack>
-      {estateMode && estate ? (
-        <EstateView
-          model={model}
-          estate={estate}
-          edges={view.model.edges}
-          o={o}
-          rateUnit={rateUnit}
-          width={width}
-          height={mapH}
-          panelOpen={panelOpen}
-          narrow={narrow}
-          panelW={panelW}
-          onOpenLanes={() => setMapView("lanes")}
-        />
-      ) : (
-        <Box
-          sx={{
-            position: "relative",
-            flexGrow: 1,
-            display: "flex",
-            minHeight: 0,
-          }}
-        >
-          <Box
-            sx={{
-              width: mapW,
-              height: mapH,
-              flexShrink: 0,
-              position: "relative",
-            }}
-            data-testid="depmap-canvas"
-          >
-            {/*
-             * The canvas cannot take keyboard focus per node, so every service is also a button here:
-             * hidden until one of them is focused (Tab into the map), then shown over the map.
-             */}
-            <Box
-              component="nav"
-              aria-label="Services on the map"
-              sx={{
-                position: "absolute",
-                zIndex: 3,
-                left: 4,
-                top: 4,
-                maxWidth: mapW - 8,
-                maxHeight: mapH - 8,
-                overflow: "auto",
-                display: "flex",
-                flexWrap: "wrap",
-                gap: 0.5,
-                p: 0.5,
-                bgcolor: "background.paper",
-                boxShadow: 2,
-                borderRadius: 1,
-                "&:not(:focus-within)": {
-                  clip: "rect(0 0 0 0)",
-                  clipPath: "inset(50%)",
-                  width: 1,
-                  height: 1,
-                  overflow: "hidden",
-                  p: 0,
-                  whiteSpace: "nowrap",
-                },
-              }}
-            >
-              {view.model.nodes.map((n) => (
-                <Button
-                  key={n.id}
-                  size="small"
-                  variant={selectedNode === n.id ? "contained" : "outlined"}
-                  aria-pressed={selectedNode === n.id}
-                  sx={{ textTransform: "none", py: 0 }}
-                  onClick={() => onNodeClick(n.id)}
-                >
-                  {n.name}
-                </Button>
-              ))}
-            </Box>
-            <GraphCanvas
-              option={option}
-              theme={props.echartsTheme}
-              width={mapW}
-              height={mapH}
-              onNodeClick={onNodeClick}
-              onEdgeClick={onEdgeClick}
-              onBlankClick={onBlankClick}
-            />
-          </Box>
-          {panelOpen ? (
-            <Box
-              sx={{
-                width: narrow ? Math.min(width, 340) : panelW,
-                height: mapH,
-                borderLeft: 1,
-                borderColor: "divider",
-                bgcolor: "background.paper",
-                ...(narrow
-                  ? {
-                      position: "absolute",
-                      right: 0,
-                      top: 0,
-                      zIndex: 2,
-                      boxShadow: 4,
-                    }
-                  : {}),
-              }}
-            >
-              <SidePanel
-                model={model}
-                o={o}
-                mode={mode}
-                failure={failure}
-                down={down}
-                onToggleHost={toggleHost}
-                onScenario={(d) => {
-                  setMode("failure");
-                  setDown(new Set(d));
-                }}
-                spofs={spofs}
-                hardWired={hardWired}
-                selectedNode={selectedNode}
-                selectedEdge={selectedEdge}
-                onSelectNode={(id) => {
-                  setSelectedNode(id);
-                  setSelectedEdge(undefined);
-                }}
-                onSelectEdge={(id) => {
-                  setSelectedEdge(id);
-                  setSelectedNode(undefined);
-                }}
-                needs={needs}
-                waves={waves}
-                onWave={(id, w) =>
-                  setWaveOverrides((cur) => ({ ...cur, [id]: w }))
-                }
-                changedWaves={changedWaves}
-                onCopyMapping={() =>
-                  void copyText(updateWaves(props.mappingText, waveOverrides))
-                }
-                firewallScope={firewallScope}
-                onFirewallScope={setFirewallScope}
-                clusters={clusters}
-                chain={chain?.nodes}
-                firewall={firewall}
-                hiddenEdges={view.hiddenEdges}
-                mappingErrors={props.mappingErrors}
-                nowSeconds={nowSeconds}
-                copy={copyText}
-                rateUnit={rateUnit}
-              />
-            </Box>
-          ) : null}
-        </Box>
-      )}
+      <EstateView
+        model={model}
+        estate={estate}
+        edges={view.edges}
+        o={o}
+        mode={mode}
+        onMode={setMode}
+        rateUnit={rateUnit}
+        width={width}
+        height={mapH}
+        panelOpen={panelOpen}
+        narrow={narrow}
+        panelW={panelW}
+      />
     </Box>
   );
 }

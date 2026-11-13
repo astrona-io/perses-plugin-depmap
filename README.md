@@ -29,24 +29,24 @@ script everywhere else. The kit for all of them is in [collect/](collect/).
 
 ![Light theme, estate view](docs/images/estate-light.jpg)
 
-The lanes view, for migration waves:
+**If unreachable**, with the app03 server marked: what stops, what loses a dependency, what may
+break further away, and every unit ranked by what it would take down on its own:
 
-![Dark theme, map mode: waves 1 to 3, what stays and what is outside in columns; hard-wired edges dotted; an unknown address flagged; firewall rules for wave 1 in the side panel](docs/images/map-dark.jpg)
+![Dark theme, If unreachable mode with app03 marked: billing stops, portal loses a dependency, api-gw and the load balancer may break through it; the side panel ranks mq01, nfs01 and the old data centre as the units that hurt most](docs/images/unreachable-dark.jpg)
 
-![Dark theme, what-if mode with ldap01 and ldap02 down: ldap has lost its quorum, portal is hard-wired to ldap01 and breaks, everything in front of it breaks through it](docs/images/what-if-dark.jpg)
-
-| Light theme, map | Light theme, what if |
+| Light theme, the units | Light theme, the impact list |
 | --- | --- |
-| ![Light theme, map mode](docs/images/map-light.jpg) | ![Light theme, what-if mode](docs/images/what-if-light.jpg) |
+| ![Light theme, If unreachable mode](docs/images/unreachable-light.jpg) | ![Light theme, the impact list below the units: one stops, one loses a dependency, two may break](docs/images/unreachable-list-light.jpg) |
 
 The screenshots come from the [dev/](dev/) stack: a made-up estate of twenty containers with 30 days
-of history, collected by the fallback script. The hybrid screenshots are further down, in
-[Hybrid estates](#hybrid-estates).
+of history, collected by the fallback script.
 
 ## Supported versions
 
 | Plugin | Perses | Status |
 | --- | --- | --- |
+| 0.4.x | v0.55.x | Tested with v0.55.1 |
+| 0.3.x | v0.55.x | Tested with v0.55.1 |
 | 0.2.x | v0.55.x | Tested with v0.55.1 |
 | 0.1.x | v0.55.x | Tested with v0.55.1 |
 
@@ -55,10 +55,9 @@ v1.0.0.
 
 ## What it does
 
-The panel has three modes, picked in its toolbar. Map opens in one of two views, **Estate** or
-**Lanes**.
+The panel has two modes, picked in its toolbar: **Map** and **If unreachable**.
 
-**Map, Estate.** A drill-down from the whole estate to a single workload, with navigation inside the
+**Map.** A drill-down from the whole estate to a single workload, with navigation inside the
 panel:
 
 - **Estate:** callers outside (clients), load balancers, one block per Kubernetes cluster (grouped by
@@ -71,8 +70,8 @@ panel:
 - **Machine:** one card per namespace with its workloads as fixed-width chips (eight, then "+N more").
   A blue outline marks a workload that talks to another machine.
 - **Place pages:** a load balancer, storage (by role and by host for Ceph), a LAN, an internet
-  provider (the busiest addresses by name, the rest counted), the mapped servers (with a button to the
-  lanes view).
+  provider (the busiest addresses by name, the rest counted), the mapped servers (with the firewall
+  rules per migration wave).
 - **Dependencies:** what calls a workload and what it calls, one to three hops (or + on a row), its
   blast radius, and the outside systems for which it is the only path.
 
@@ -81,60 +80,38 @@ hides flows of namespaces and workloads matching `monitoringPattern`. Long names
 ellipsis and shown whole in a tooltip. An edge's rate is split evenly over the instance pairs it
 joins when it is drawn between machines.
 
-**Map, Lanes.** Services from your mapping in columns: one per migration wave (moving to new VMs), then what
-stays in the old data centre, then what is outside (externals and unknown IPs). Each node shows its
-name, owner, HA type and instances. Edges point from caller to callee:
+Rates are averaged over the window and shown per second by default; the toolbar switches between
+per second, minute, hour and automatic. Checkboxes in the toolbar hide frequency classes (constantly,
+hourly, daily, weekly, monthly / rare), and the panel says how many edges are hidden.
 
-| Edge | Means |
+The side panel (open by default on wide panels, behind **Show details** on narrow ones) shows what is
+selected: a cluster with **Copy firewall rules** for traffic across its boundary, a machine, a place, or
+a workload's dependencies with **Open details** (`linkTemplates.node`). Every machine, cluster, server
+and place has **What if it is unreachable?**, which opens the second mode with it marked.
+
+**If unreachable.** Every unit the estate has, as boxes: the places outside the clusters (load
+balancers, storage and each storage host, LANs), every machine of every cluster (or **Mark whole
+cluster**), the mapped servers and the internet providers. Click a box to mark it unreachable, again to
+bring it back; mark as many as you like, or type one into the search box. The panel then works out:
+
+| Section | Means |
 | --- | --- |
-| solid | seen at least daily |
-| dashed | weekly or monthly (rare) |
-| dotted, warning colour | hard-wired: the caller only ever connected to one member of an HA service |
+| Stop | a workload whose every machine is unreachable, or a unit marked itself |
+| Lose a dependency | it calls something that stopped |
+| May break, further away | it calls something that loses a dependency, up to four hops |
+| Machines that lose something | the host itself (kubelet, a kernel storage client) calls something that stopped |
+| Still run, on fewer machines | some of its machines are unreachable, some are left |
+| Call something with less headroom | it calls something that runs on fewer machines |
 
-Hover an edge for its port, frequency (seen in how many of the window's hours), average rate (OBI)
-and last seen. Rates are averaged over the window and shown per second by default; the toolbar switches
-between per second, minute, hour and automatic. Click a service or edge for details in the side panel. Checkboxes in the toolbar hide
-frequency classes (constantly, hourly, daily, weekly, monthly / rare), and the panel says how many
-edges are hidden.
+A caller that only ever connected to one instance of a service (it skips the VIP) loses that service
+when that instance's machine is unreachable, even though other instances are left. Every row says
+why ("ran only on app03", "calls billing on :8443", "calls portal, which loses billing"), with a text
+label and a left border, not only a colour. Click a row for the chain it breaks along.
 
-**What if.** Every node shows its instances as chips (`P` and `S` for primary and standby). Click a
-chip to take that instance down, again to bring it back; take down as many as you like, or pick a
-preset. The panel evaluates every service:
-
-| HA type | Rule |
-| --- | --- |
-| `single` | instance down: service down |
-| `active-passive` | primary down, standby up: failing over. Standby down only: degraded, no failover left. Both down: down |
-| `active-active` | fewer than `minUp` up: down. Otherwise the survivors need `load × n / up` percent: over 100 is overloaded, else reduced |
-| `quorum` | a majority up: degraded. Otherwise down |
-
-Then it follows the callers: a caller of a down service breaks, and so does a caller hard-wired to a
-down instance even if the service failed over; their callers break through them, transitively. Callers
-of a failing-over or overloaded service are at risk. Every affected node says why ("hard-wired to
-ldap01, failover can't help", "quorum lost (1 of 3)", "needs 130% capacity"). Every state has a text
-label and a symbol, not only a colour: `✕ down`, `↯ breaks`, `⇄ failing over`, `▲ overloaded`,
-`◐ degraded`, `◐ reduced`, `△ at risk`, `● ok`.
-
-**Needs.** Click a service to light up everything it depends on, transitively: the set that must move
-with it or stay reachable from where it moves to.
-
-The map works from the keyboard: Tab into it and every service is offered as a button over the map;
-Enter or Space selects it, as a click would.
-
-The side panel (open by default on wide panels, behind **Show details** on narrow ones) has:
-
-- **Scenario:** counts (out, degraded or at risk, unaffected) and the affected services with reasons.
-- **Lose one server:** every single instance tried down on its own; the ones that take any service
-  out, worst first, each with a **Try** button. Then every hard-wired client.
-- **Service details:** owner, HA type, VIP, load, instances (as toggles in What if), inbound and
-  outbound connections, and a wave selector that moves the service between columns live. That is
-  planning only; **Copy updated mapping** copies the mapping with the new waves, comments kept.
-- **Firewall rules** for a chosen wave: for every connection that crosses between the new VMs, the
-  old data centre and outside once that wave has moved, one line per instance
-  (`app01 (10.1.1.11) -> ldap01 (10.1.4.1):636/tcp`). Callers of a VIP get a rule to every member and
-  the VIP; a hard-wired caller gets only its member. **Copy** puts the list on the clipboard.
-- **Easy to miss:** rare edges, addresses nobody owns (shown as `? find owner`), and hard-wired
-  instances.
+Without anything marked, the side panel ranks every unit by what it takes down on its own (**What
+hurts most, one at a time**): click one to try it alone, shift-click to add it. The ranking is the list
+of single points of failure. What the flows cannot tell, the panel says: a flow seen once a month is in
+the map, but a dependency that never sent a packet in the window is not.
 
 ## Data it expects
 
@@ -244,16 +221,10 @@ addresses"; outside callers that are never called are "Clients".
 | `mapping` | `services: []` | The mapping, YAML or JSON |
 | `window` | dashboard time range | Observation window, ending at the dashboard's end time, e.g. `30d`. Rates and frequencies are computed over it |
 | `frequencyThresholds` | `constantly: 0.9`, `hourly: 0.2`, `daily: 0.02`, `weekly: 0.004` | Minimum share of the window's hours per class; less than `weekly` is monthly / rare |
-| `lanes.waveLabels` | `Wave 1`, `Wave 2`, … | Label per wave number, e.g. `{"1": "Wave 1 (March)"}` |
-| `lanes.stayLabel` | `Stays in old DC` | |
-| `lanes.externalLabel` | `External / unknown` | |
 | `lanes.showExternal` | `true` | Draw externals and unknown IPs |
 | `edgeFilter` | all classes | Frequency classes shown when the panel opens |
-| `linkTemplates.node` | none | Link in a service's details. `${service}`, `${name}`, `${host}`, `${hosts}` |
-| `linkTemplates.edge` | none | Link in an edge's details. `${source}`, `${target}`, `${port}` |
-| `scenarios` | none | Presets: `[{name: "LDAP split", down: [ldap01, ldap02]}]`. Without any, the worst single servers are offered |
-| `defaultMode` | `map` | `map`, `failure` (What if) or `needs` |
-| `defaultView` | `estate` | View the map opens in: `estate` or `lanes` |
+| `linkTemplates.node` | none | **Open details** link in a workload's dependencies. `${service}`, `${name}`, `${host}`, `${hosts}` |
+| `defaultMode` | `map` | `map` or `outage` (If unreachable). The old `failure` opens as `outage`, `needs` as `map` |
 | `rateUnit` | `s` | Rates per `s`, `min`, `h` or `auto`; the toolbar changes it |
 | `clusterLabel` | `k8s_cluster_name` | Label with the Kubernetes cluster name, one block per value. Keep it in `queries.edge` |
 | `clusterName` | `kubernetes` | Cluster name when no series carries the label |
@@ -268,16 +239,9 @@ Few old estates are all VMs any more. Part of it already runs on Kubernetes, and
 cross the boundary: an old VM calls a NodePort, the pod behind it calls the Oracle server on another
 VM. depmap draws that as one connected path.
 
-![Dark theme, map mode with orders selected: lb, api, portal and billing on VMs lead into the orders workload in the Kubernetes lane, which calls the Oracle VIP and the bank API back outside the cluster](docs/images/hybrid-dark.jpg)
-
-| Light theme, hybrid hop chain |
-| --- |
-| ![Light theme, the same hop chain](docs/images/hybrid-light.jpg) |
-
-- **A Kubernetes lane** per cluster sits between the waves and what stays, because that is where the
-  chains cross it. Workloads are grouped by namespace; each node of the cluster is an instance of a
-  "nodes" group, so you can take one down.
-- **Hop chains.** Selecting a service highlights its callers and callees on both sides of the
+- **Clusters** are blocks of their own, with their machines; workloads are grouped by namespace on
+  each machine.
+- **Hop chains.** A workload's dependencies follow callers and callees on both sides of the
   boundary: `billing (VM) -> orders (pods, through node:30080) -> oracle (VM)`.
 - **Identity.** A pod address becomes its workload, a Service ClusterIP the workload behind it, a node
   address its node, and anything else the VM or external from the mapping
@@ -287,10 +251,9 @@ VM. depmap draws that as one connected path.
   that no pod-side flow explains (no OBI there, or not at that time) is drawn honestly from
   **via node X (NAT, pod unknown)**, not guessed
   ([limits](docs/DECISIONS.md#16-stitching-snat-clusterip-and-nodeport-and-its-limits)).
-- **What if** across the boundary: taking a Kubernetes node down takes its pods with it. A workload
-  with fewer replicas than desired is degraded or down by its HA rule, with a note that Kubernetes
-  reschedules the pods. A VM pinned to one node's NodePort (it only ever called that node) breaks with
-  that node, even though the workload survives elsewhere.
+- **If unreachable** across the boundary: an unreachable Kubernetes machine takes its pods with it.
+  A workload with pods left elsewhere runs on fewer machines; one without stops. A VM pinned to one
+  node's NodePort (it only ever called that node) loses the workload with that node.
 - **Firewall rules** treat a cluster as a zone of its own. Pods are never in a rule: traffic out of
   the cluster comes from `egressIps`, else every node address (a pod can run on any node); traffic in
   goes to the node addresses on the NodePort (only the pinned node for a pinned caller) or to the
@@ -320,17 +283,17 @@ VM. depmap draws that as one connected path.
    missing from `nodePorts`.
 5. **Wait past a month-end.** Monthly and quarterly jobs only show up when they run. Keep the window at
    30 days and check again on the 2nd of the month: new dashed edges are the jobs nobody mentioned.
-6. **Read the map.** In **What if**, open **Lose one server**: every entry is a single point of
-   failure, Kubernetes nodes included. The hard-wired clients list shows callers that skip the VIP or
-   call one node's NodePort; fix their configuration before the migration or they will break when
-   their node moves. **Easy to miss** collects the rare edges and the addresses without an owner.
-7. **Plan the waves.** Click a service, use **Needs** to see what must move with it, and set its wave
-   in the details. The columns move live. When the plan holds, **Copy updated mapping** and paste it
-   into the panel settings, so the plan is saved with the dashboard.
-8. **Export the firewall rules.** Pick a wave in **Firewall rules**: the list is every connection that
-   crosses zones once it moves, per instance, the cluster boundary included (node or egress addresses
-   as sources, NodePorts and LoadBalancer addresses as destinations). Copy it into the change request.
-   Repeat per wave.
+6. **Find the single points of failure.** Open **If unreachable**: **What hurts most, one at a time**
+   ranks every machine, server and place by what it takes down on its own, Kubernetes nodes
+   included. Mark one to see the chain it breaks along. A caller that loses a service although other
+   instances are left skips the VIP or calls one node's NodePort; fix its configuration before the
+   migration or it will break when its instance moves.
+7. **Plan the waves.** Open a service's dependencies to see what it calls and what calls it, set
+   `wave` in the mapping, and save the panel.
+8. **Export the firewall rules.** On the **Servers** page, **Copy wave N** gives every connection that
+   crosses zones once that wave has moved, per instance, the cluster boundary included (node or egress
+   addresses as sources, NodePorts and LoadBalancer addresses as destinations). Copy it into the change
+   request. Repeat per wave.
 9. **Remove the collectors** after the migration: `collect/obi/install.sh --remove`,
    `kubectl delete -k collect/kubernetes/obi`, and the removal steps for the container and the script
    in [collect/README.md](collect/README.md). Nothing else was changed on the servers.
@@ -359,8 +322,8 @@ podman container cannot, even on a kernel with BTF (details in
 
 ```bash
 npm ci
-percli plugin build                    # writes DepMap-0.3.0.tar.gz
-cp DepMap-0.3.0.tar.gz dev/archive/
+percli plugin build                    # writes DepMap-0.4.0.tar.gz
+cp DepMap-0.4.0.tar.gz dev/archive/
 cd dev
 podman compose up -d --build           # or docker compose
 ```
@@ -411,16 +374,16 @@ Download `DepMap-<version>.tar.gz` from the
 Perses can read, and add that directory to the config:
 
 ```bash
-curl -fLO https://github.com/astrona-io/perses-plugin-depmap/releases/download/v0.3.0/DepMap-0.3.0.tar.gz
-curl -fLO https://github.com/astrona-io/perses-plugin-depmap/releases/download/v0.3.0/DepMap-0.3.0.tar.gz.sha256
-sha256sum -c DepMap-0.3.0.tar.gz.sha256
+curl -fLO https://github.com/astrona-io/perses-plugin-depmap/releases/download/v0.4.0/DepMap-0.4.0.tar.gz
+curl -fLO https://github.com/astrona-io/perses-plugin-depmap/releases/download/v0.4.0/DepMap-0.4.0.tar.gz.sha256
+sha256sum -c DepMap-0.4.0.tar.gz.sha256
 ```
 
 ```yaml
 plugin:
   archive_paths:
     - /etc/perses/plugins-archive # plugins bundled with Perses
-    - /etc/perses/plugins-archive-depmap # put DepMap-0.3.0.tar.gz here
+    - /etc/perses/plugins-archive-depmap # put DepMap-0.4.0.tar.gz here
 ```
 
 ### Option B: Kubernetes image volume
@@ -436,7 +399,7 @@ linux/amd64 and linux/arm64. Mount it into the Perses pod as an
 volumes:
   - name: depmap-plugin
     image:
-      reference: ghcr.io/astrona-io/perses-plugin-depmap:v0.3.0
+      reference: ghcr.io/astrona-io/perses-plugin-depmap:v0.4.0
       pullPolicy: IfNotPresent
 containers:
   - name: perses
@@ -459,7 +422,7 @@ Copy the archive into the directory of bundled plugins. No config change is need
 
 ```dockerfile
 FROM persesdev/perses:v0.55.1
-COPY DepMap-0.3.0.tar.gz /etc/perses/plugins-archive/
+COPY DepMap-0.4.0.tar.gz /etc/perses/plugins-archive/
 ```
 
 ## Development

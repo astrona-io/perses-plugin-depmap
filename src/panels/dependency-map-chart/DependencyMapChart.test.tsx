@@ -1,6 +1,6 @@
 import { readFileSync } from "fs";
 import { join } from "path";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import {
   estateModel,
   estateSamples,
@@ -9,7 +9,6 @@ import {
 } from "../../test-utils/estate";
 import { DependencyMapChartComponent } from "./DependencyMapChartComponent";
 import { DependencyMapView } from "./DependencyMapView";
-import { Palette } from "./chart-option";
 import {
   DependencyMapChartOptions,
   DependencyMapChartProps,
@@ -20,54 +19,11 @@ import { DepmapData } from "./useDepmapData";
 import { Mapping, parseMapping } from "./mapping";
 import { EdgeSample, buildModel } from "./model";
 
-// The canvas is replaced by a stub that exposes the option and lets tests click items.
-let lastOption:
-  | {
-      series: Array<{
-        data: Array<{ id: string; name?: string }>;
-        links: unknown[];
-      }>;
-    }
-  | undefined;
-jest.mock("./GraphCanvas", () => ({
-  GraphCanvas: (p: {
-    option: object;
-    onNodeClick: (id: string) => void;
-    onEdgeClick: (id: string) => void;
-  }) => {
-    lastOption = p.option as typeof lastOption;
-    return (
-      <div data-testid="graph">
-        <button onClick={() => p.onNodeClick("chip:oracle|db01")}>
-          click chip db01
-        </button>
-        <button onClick={() => p.onNodeClick("portal")}>click portal</button>
-      </div>
-    );
-  },
-}));
-
 let mockData: DepmapData = { windowHours: 720, endSeconds: 0, isLoading: true };
 jest.mock("./useDepmapData", () => ({ useDepmapData: () => mockData }));
 jest.mock("@perses-dev/components", () => ({
   LoadingOverlay: () => <div role="progressbar">loading</div>,
-  useChartsTheme: () => ({ echartsTheme: {} }),
 }));
-
-const palette: Palette = {
-  text: "#111",
-  textSecondary: "#555",
-  divider: "#ddd",
-  paper: "#fff",
-  background: "#fafafa",
-  error: "#d32f2f",
-  warning: "#ed6c02",
-  primary: "#1976d2",
-  secondary: "#9c27b0",
-  info: "#0288d1",
-  success: "#2e7d32",
-  alpha: (c, a) => `${c}/${a}`,
-};
 
 const mappingText = readFileSync(
   join(__dirname, "../../../dev/estate/mapping.yaml"),
@@ -79,7 +35,7 @@ function renderComponent(spec: DependencyMapChartOptions): void {
   render(
     <DependencyMapChartComponent
       {...({
-        spec: { defaultView: "lanes", ...spec },
+        spec,
         contentDimensions: dims,
       } as unknown as DependencyMapChartProps)}
     />,
@@ -87,10 +43,6 @@ function renderComponent(spec: DependencyMapChartOptions): void {
 }
 
 describe("DependencyMapChartComponent", () => {
-  beforeEach(() => {
-    lastOption = undefined;
-  });
-
   it("shows the loading overlay first", () => {
     mockData = { windowHours: 720, endSeconds: 0, isLoading: true };
     renderComponent({ mapping: mappingText });
@@ -113,7 +65,7 @@ describe("DependencyMapChartComponent", () => {
     expect(
       screen.getByText(/No connections seen in the window/),
     ).toBeInTheDocument();
-    expect(screen.queryByTestId("graph")).toBeNull();
+    expect(screen.queryByTestId("depmap-estate")).toBeNull();
   });
 
   it("shows query errors", () => {
@@ -158,23 +110,17 @@ describe("DependencyMapChartComponent", () => {
       },
     };
     renderComponent({ mapping: mappingText });
-    expect(screen.getByTestId("graph")).toBeInTheDocument();
+    expect(screen.getByTestId("depmap-estate")).toBeInTheDocument();
     expect(screen.getByText("fallback script")).toBeInTheDocument();
-    const ids = lastOption!.series[0]!.data.map((d) => d.id);
-    expect(ids).toEqual(
-      expect.arrayContaining([
-        "portal",
-        "oracle",
-        "chip:oracle|db01",
-        "ip:10.1.7.22",
-      ]),
-    );
+    expect(
+      screen.getByRole("button", { name: "Open Servers" }),
+    ).toBeInTheDocument();
   });
 });
 
 describe("DependencyMapView", () => {
   const model = estateModel();
-  const o = resolveOptions({ mapping: mappingText, defaultView: "lanes" });
+  const o = resolveOptions({ mapping: mappingText });
   const view = (
     over: Partial<Parameters<typeof DependencyMapView>[0]> = {},
   ): void => {
@@ -183,44 +129,34 @@ describe("DependencyMapView", () => {
         model={model}
         o={o}
         mapping={parseMapping(mappingText).mapping}
-        mappingText={mappingText}
         mappingErrors={[]}
-        palette={palette}
-        echartsTheme={{}}
         width={1200}
         height={700}
-        nowSeconds={END_HOUR * 3600}
         {...over}
       />,
     );
   };
 
-  it("failure mode: clicking a chip takes the host down and lists what breaks", () => {
+  it("if unreachable: marking a server host lists what stops and what loses it", () => {
     view();
-    fireEvent.click(screen.getByRole("button", { name: "What if" }));
-    fireEvent.click(screen.getByText("click chip db01"));
-    const scenario = screen.getByRole("region", { name: "Scenario" });
-    expect(within(scenario).getByText(/Down:/)).toHaveTextContent("db01");
+    fireEvent.click(screen.getByRole("button", { name: "If unreachable" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Mark app03 unreachable" }),
+    );
     expect(
-      within(scenario).getByText(/hard-wired to db01/),
-    ).toBeInTheDocument();
-    expect(within(scenario).getByText("1 out")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
-    expect(
-      within(screen.getByRole("region", { name: "Scenario" })).getByText(
-        /Nothing is down/,
-      ),
-    ).toBeInTheDocument();
+      screen.getByRole("button", { name: "Mark app03 unreachable" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("ran only on app03")).toBeInTheDocument();
+    expect(screen.getByText(/^Lose a dependency · [1-9]/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    expect(screen.queryByText("ran only on app03")).toBeNull();
   });
 
-  it("offers the worst single servers as presets when none are configured", () => {
+  it("if unreachable: ranks every unit tried alone", () => {
     view();
-    fireEvent.click(screen.getByRole("button", { name: "What if" }));
+    fireEvent.click(screen.getByRole("button", { name: "If unreachable" }));
     expect(
-      screen.getByRole("button", { name: "10.1.7.22 down" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Try 10.1.7.22 down" }),
+      screen.getByRole("button", { name: "Try app03 alone" }),
     ).toBeInTheDocument();
   });
 
@@ -228,37 +164,22 @@ describe("DependencyMapView", () => {
     view();
     fireEvent.click(screen.getByRole("checkbox", { name: "Monthly / rare" }));
     expect(screen.getAllByText(/hidden/).length).toBeGreaterThan(0);
-    const ids = lastOption!.series[0]!.data.map((d) => d.id);
-    // The partner FTP is only reached by the monthly job, so it leaves the map with its edge.
-    expect(ids).not.toContain("ext:ftp.partner.example.com");
   });
 
-  it("selecting a service shows its instances as toggles and its wave", () => {
+  it("the servers page copies firewall rules per wave", () => {
     view();
-    fireEvent.click(screen.getByText("click portal"));
-    const group = screen.getByRole("group", { name: "Instances" });
-    expect(within(group).getAllByRole("button")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Open Servers" }));
     expect(
-      within(group).getByRole("button", { name: "app01" }),
-    ).toHaveAttribute("aria-pressed", "false");
-  });
-
-  it("firewall rules for the chosen wave", () => {
-    view();
-    const fw = screen.getByRole("region", { name: "Firewall rules" });
-    expect(
-      within(fw).getByText(
-        /app01 \(10\.1\.1\.11\) -> ldap01 \(10\.1\.4\.1\):636\/tcp/,
-      ),
+      screen.getByRole("button", { name: "Copy wave 1" }),
     ).toBeInTheDocument();
   });
 
   it("narrow panels start with the side panel closed and open it on demand", () => {
     view({ width: 500 });
-    expect(screen.queryByRole("region", { name: "Firewall rules" })).toBeNull();
+    expect(screen.queryByRole("complementary", { name: "Details" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Show details" }));
     expect(
-      screen.getByRole("region", { name: "Firewall rules" }),
+      screen.getByRole("complementary", { name: "Details" }),
     ).toBeInTheDocument();
   });
 
@@ -288,9 +209,11 @@ describe("DependencyMapView", () => {
       });
     }
     const big = buildModel(mapping, samples, DEFAULT_THRESHOLDS, 24);
+    expect(big.edges).toHaveLength(600);
     const t0 = performance.now();
-    view({ model: big, mappingText: "" });
+    view({ model: big, mapping });
+    fireEvent.click(screen.getByRole("button", { name: "If unreachable" }));
     expect(performance.now() - t0).toBeLessThan(3000);
-    expect(lastOption!.series[0]!.links).toHaveLength(600);
+    expect(screen.getByTestId("depmap-estate")).toBeInTheDocument();
   });
 });

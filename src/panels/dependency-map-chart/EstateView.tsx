@@ -13,15 +13,17 @@ import {
   Box,
   Button,
   ButtonBase,
+  Chip,
   Link,
   TextField,
   ToggleButton,
   ToggleButtonGroup,
   Tooltip,
   Typography,
+  alpha,
   useTheme,
 } from "@mui/material";
-import { RateUnit, ResolvedOptions } from "./dependency-map-chart-types";
+import { Mode, RateUnit, ResolvedOptions } from "./dependency-map-chart-types";
 import {
   Estate,
   Hop,
@@ -37,14 +39,44 @@ import {
   linksOf,
   monitoringRegex,
 } from "./estate";
-import { formatRate } from "./format";
+import {
+  firewallRulesForCluster,
+  firewallRulesForWave,
+  formatRules,
+  wavesOf,
+} from "./firewall";
+import { fillTemplate, formatRate, safeHref } from "./format";
 import { DepEdge, DepModel } from "./model";
-import { CLIENTS_ID, PRIVATE_ID, Place, SERVERS_ID, cephRole } from "./places";
+import {
+  Effect,
+  Outage,
+  OutageInput,
+  OutageSummary,
+  addrUnit,
+  chainOf,
+  isUnit,
+  outageScore,
+  rankUnits,
+  simulate,
+  storageHosts,
+  summarize,
+  summaryParts,
+} from "./outage";
+import {
+  CLIENTS_ID,
+  OTHER_INTERNET_ID,
+  PRIVATE_ID,
+  Place,
+  SERVERS_ID,
+  cephRole,
+} from "./places";
 
 /**
  * The map mode's estate view: a drill-down from the whole estate to clusters, machines, namespaces and
  * workloads, a page per place (load balancer, storage, LAN, internet provider), and the dependencies
- * of anything on it. Navigation state lives here, in the panel; nothing is written to the URL.
+ * of anything on it. In outage mode ("If unreachable") the same estate becomes a board of units to
+ * mark as down, with what that does beside it. Navigation and the outage live here, in the panel;
+ * nothing is written to the URL.
  *
  * Navigation targets are strings: "estate", "cluster:<name>", a machine id ("m:<cluster>/<node>"),
  * "place:<place id>", "internet" (all providers) and "deps:<node or place id>".
@@ -62,8 +94,8 @@ export interface EstateViewProps {
   panelOpen: boolean;
   narrow: boolean;
   panelW: number;
-  /** Opens the lanes view (the servers' waves, firewall rules, What if). */
-  onOpenLanes: () => void;
+  mode: Mode;
+  onMode: (mode: Mode) => void;
 }
 
 const CRUMBS_H = 40;
@@ -466,6 +498,9 @@ function Card({
   dashed,
   minWidth = 150,
   tip,
+  tone,
+  label,
+  pressed,
 }: {
   loc: string;
   icon?: IconType;
@@ -479,6 +514,12 @@ function Card({
   children?: ReactNode;
   dashed?: boolean;
   minWidth?: number;
+  /** Outage mode: down, hit (stops or loses a dependency), warn (less headroom), dim (unaffected). */
+  tone?: Tone;
+  /** Accessible name; default "Open <name>". */
+  label?: string;
+  /** Set for toggles. */
+  pressed?: boolean;
 }): ReactElement {
   return (
     <ButtonBase
@@ -488,7 +529,8 @@ function Card({
       onMouseLeave={() => onHover(undefined)}
       onFocus={() => onHover(loc)}
       onBlur={() => onHover(undefined)}
-      aria-label={`Open ${name}`}
+      aria-label={label ?? `Open ${name}`}
+      aria-pressed={pressed}
       sx={{
         position: "relative",
         zIndex: 1,
@@ -503,9 +545,27 @@ function Card({
         borderRadius: 1,
         border: 1,
         borderStyle: dashed ? "dashed" : "solid",
-        borderColor: active ? "primary.main" : "divider",
-        bgcolor: "background.paper",
-        "&:hover, &.Mui-focusVisible": { borderColor: "primary.main" },
+        borderColor: active
+          ? "primary.main"
+          : tone === "down" || tone === "hit"
+            ? "error.main"
+            : tone === "warn"
+              ? "warning.main"
+              : "divider",
+        borderWidth: tone === "down" ? 2 : 1,
+        bgcolor: (t) =>
+          tone === "down"
+            ? alpha(t.palette.error.main, 0.16)
+            : tone === "hit"
+              ? alpha(t.palette.error.main, 0.06)
+              : tone === "warn"
+                ? alpha(t.palette.warning.main, 0.08)
+                : t.palette.background.paper,
+        opacity: tone === "dim" ? 0.6 : 1,
+        "&:hover, &.Mui-focusVisible": {
+          borderColor: "primary.main",
+          opacity: 1,
+        },
       }}
     >
       <Box
@@ -521,6 +581,8 @@ function Card({
     </ButtonBase>
   );
 }
+
+type Tone = "down" | "hit" | "warn" | "dim";
 
 function Heading({ children }: { children: string }): ReactElement {
   return (
@@ -600,6 +662,7 @@ function Row({
   meta,
   onClick,
   tip,
+  tone,
 }: {
   icon?: IconType;
   name: string;
@@ -607,12 +670,22 @@ function Row({
   meta?: string;
   onClick?: () => void;
   tip?: string;
+  /** Outage mode: a coloured edge on the left; "via" is dashed. */
+  tone?: "bad" | "via" | "warn";
 }): ReactElement {
   return (
     <ButtonBase
       onClick={onClick}
       disabled={!onClick}
       sx={{
+        ...(tone
+          ? {
+              borderLeft: 3,
+              borderLeftStyle: tone === "via" ? "dashed" : "solid",
+              borderLeftColor: tone === "warn" ? "warning.main" : "error.main",
+              mb: 0.25,
+            }
+          : {}),
         display: "grid",
         gridTemplateColumns: "minmax(0,1fr) auto",
         alignItems: "center",
@@ -665,6 +738,7 @@ export function EstateView(props: EstateViewProps): ReactElement {
   const [openNs, setOpenNs] = useState<Set<string>>(() => new Set());
   const mapRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const impactRef = useRef<HTMLDivElement>(null);
   const rate = useCallback(
     (bps: number | undefined) => formatRate(bps, rateUnit),
     [rateUnit],
@@ -698,6 +772,16 @@ export function EstateView(props: EstateViewProps): ReactElement {
     return estate.hops.filter((h) => ids.has(h.edge.id));
   }, [estate, edges]);
   const graph = useMemo(() => depGraph(estate, edges), [estate, edges]);
+
+  // ---------- If unreachable ----------
+  // Kept across mode switches, so going back to the map and returning keeps the outage.
+  const [down, setDown] = useState<Set<string>>(() => new Set());
+  const [focus, setFocus] = useState<string | undefined>();
+  const [copied, setCopied] = useState<string | undefined>();
+  const outageInput = useMemo<OutageInput>(
+    () => ({ model, estate, graph, hops: visibleHops }),
+    [model, estate, graph, visibleHops],
+  );
 
   const placeName = useCallback(
     (id: string): string => estate.places.get(id)?.name ?? id,
@@ -784,6 +868,67 @@ export function EstateView(props: EstateViewProps): ReactElement {
     [model, estate, locName],
   );
 
+  const unitName = useCallback(
+    (u: string): string => {
+      if (u.startsWith("cluster:")) return `${u.slice(8)} (cluster)`;
+      if (u.startsWith("vm:")) return u.slice(3);
+      if (u.startsWith("addr:")) {
+        const at = u.lastIndexOf("@");
+        return `${placeName(u.slice(5, at))} ${u.slice(at + 1)}`;
+      }
+      return info(u).name;
+    },
+    [info, placeName],
+  );
+  const outage = useMemo<Outage>(
+    () => simulate(outageInput, down, unitName),
+    [outageInput, down, unitName],
+  );
+  const outageSummary = useMemo<OutageSummary>(
+    () => summarize(outageInput, outage),
+    [outageInput, outage],
+  );
+  const ranking = useMemo(
+    () => (props.mode === "outage" ? rankUnits(outageInput, unitName) : []),
+    [props.mode, outageInput, unitName],
+  );
+  const tryUnreachable = (unit: string): void => {
+    setDown(new Set([unit]));
+    setFocus(undefined);
+    props.onMode("outage");
+  };
+  const unreachableButton = (unit: string): ReactElement => (
+    <Button
+      size="small"
+      variant="outlined"
+      color="error"
+      sx={{ mt: 1.5, textTransform: "none" }}
+      onClick={() => tryUnreachable(unit)}
+    >
+      What if it is unreachable?
+    </Button>
+  );
+  const copy = (key: string, text: string): void => {
+    void navigator.clipboard?.writeText(text);
+    setCopied(key);
+  };
+  const copyButton = (
+    key: string,
+    label: string,
+    text: string,
+  ): ReactElement => (
+    <Button
+      key={key}
+      size="small"
+      variant="outlined"
+      disabled={!text}
+      sx={{ mt: 1, mr: 1, textTransform: "none" }}
+      onClick={() => copy(key, text)}
+    >
+      {copied === key ? "Copied" : label}
+    </Button>
+  );
+
   // Where each service runs: the locations of its instances.
   const locationsOf = useMemo(() => {
     const m = new Map<string, string[]>();
@@ -806,12 +951,24 @@ export function EstateView(props: EstateViewProps): ReactElement {
     return out.sort((a, b) => a.label.localeCompare(b.label));
   }, [model, estate, info, locName]);
 
+  const unitOfGo = (to: string): string =>
+    to.startsWith("deps:")
+      ? to.slice(5)
+      : to.startsWith("place:")
+        ? to.slice(6)
+        : to;
+
   // ---------- Crumbs ----------
-  const crumbs: Array<[string, string | undefined]> = [["Estate", "estate"]];
+  const crumbs: Array<[string, string | undefined]> =
+    props.mode === "outage"
+      ? [["If unreachable", undefined]]
+      : [["Estate", "estate"]];
   const clusterCrumb = (c: string | undefined): void => {
     if (c) crumbs.push([`${c} (cluster)`, `cluster:${c}`]);
   };
-  if (nav.startsWith("cluster:")) clusterCrumb(nav.slice(8));
+  if (props.mode === "outage") {
+    // One page: the units to mark and what that does.
+  } else if (nav.startsWith("cluster:")) clusterCrumb(nav.slice(8));
   else if (estate.machines.has(nav)) {
     const m = estate.machines.get(nav)!;
     clusterCrumb(m.cluster);
@@ -876,7 +1033,451 @@ export function EstateView(props: EstateViewProps): ReactElement {
     [estate],
   );
 
-  if (nav === "estate") {
+  if (props.mode === "outage") {
+    const toggle = (u: string, add: boolean): void => {
+      setFocus(undefined);
+      setDown((d) => {
+        const next = new Set(add ? d : []);
+        if (d.has(u)) next.delete(u);
+        else next.add(u);
+        return next;
+      });
+    };
+    const toneOf = (u: string): Tone | undefined => {
+      if (down.has(u)) return "down";
+      const m = estate.machines.get(u);
+      if (m && down.has(`cluster:${m.cluster}`)) return "down";
+      const e = outage.effects.get(u) ?? outage.hosts.get(u);
+      if (!e) return down.size ? "dim" : undefined;
+      if (e.s === "down" || e.s === "gone") return "down";
+      if (e.s === "needs" || e.s === "via") return "hit";
+      return "warn";
+    };
+    const unitCard = (
+      u: string,
+      icon: IconType,
+      name: string,
+      sub: string,
+    ): ReactElement => (
+      <Card
+        key={u}
+        loc={u}
+        icon={icon}
+        name={name}
+        sub={(outage.effects.get(u) ?? outage.hosts.get(u))?.why ?? sub}
+        tone={toneOf(u)}
+        pressed={down.has(u)}
+        label={`Mark ${name} unreachable`}
+        minWidth={140}
+        onClick={() => toggle(u, true)}
+        onHover={setHovered}
+      />
+    );
+    const cardRow = (children: ReactNode): ReactElement => (
+      <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1, mb: 1.5 }}>
+        {children}
+      </Box>
+    );
+    const inGraph = (id: string): boolean => graph.up.has(id);
+    const outside = estate.mapped.filter(
+      (p) =>
+        ["lb", "storage", "lan", "private"].includes(p.kind) && inGraph(p.id),
+    );
+    const addrs = storageHosts(outageInput);
+    const vms = [
+      ...new Set(
+        model.nodes
+          .filter((n) => n.kind === "internal" && !n.k8s)
+          .flatMap((n) => n.instances.map((i) => i.host)),
+      ),
+    ].sort();
+    const inet = [...estate.places.values()].filter(
+      (p) => p.kind === "internet" && inGraph(p.id),
+    );
+
+    const effectRows = (
+      pick: (e: Effect) => boolean,
+      tone: "bad" | "via" | "warn",
+      cap?: number,
+    ): ReactNode => {
+      const list = [...outage.effects]
+        .filter(([id, e]) => pick(e) && !down.has(id))
+        .sort(
+          (a, b) =>
+            b[1].bps - a[1].bps ||
+            info(a[0]).name.localeCompare(info(b[0]).name),
+        );
+      const shown = cap ? list.slice(0, cap) : list;
+      return (
+        <>
+          {shown.map(([id, e]) => {
+            const i = info(id);
+            return (
+              <Row
+                key={id}
+                icon={i.type}
+                name={i.name}
+                meta={e.why}
+                rate={e.bps ? rate(e.bps) : undefined}
+                tone={tone}
+                onClick={() => setFocus(id)}
+              />
+            );
+          })}
+          {list.length > shown.length ? (
+            <Note>{`${list.length - shown.length} more.`}</Note>
+          ) : null}
+        </>
+      );
+    };
+    const count = (pick: (e: Effect) => boolean): number =>
+      [...outage.effects].filter(([id, e]) => pick(e) && !down.has(id)).length;
+    const stops = (e: Effect): boolean => e.s === "down" || e.s === "gone";
+    const needs = (e: Effect): boolean => e.s === "needs";
+    const via = (e: Effect): boolean => e.s === "via";
+    const reduced = (e: Effect): boolean => e.s === "reduced";
+    const risk = (e: Effect): boolean => e.s === "risk";
+
+    main = (
+      <>
+        <Box
+          sx={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 0.75,
+            alignItems: "center",
+            mb: 1.5,
+          }}
+        >
+          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+            Unreachable:
+          </Typography>
+          {down.size ? (
+            <>
+              {[...down].map((u) => (
+                <Chip
+                  key={u}
+                  size="small"
+                  color="error"
+                  label={unitName(u)}
+                  onDelete={() => toggle(u, true)}
+                />
+              ))}
+              <Button
+                size="small"
+                sx={{ textTransform: "none" }}
+                onClick={() => {
+                  setDown(new Set());
+                  setFocus(undefined);
+                }}
+              >
+                Clear
+              </Button>
+              <Typography
+                variant="body2"
+                color={
+                  outageScore(outageSummary) > 0
+                    ? "error.main"
+                    : "text.secondary"
+                }
+                sx={{ ml: "auto" }}
+              >
+                {[
+                  outageSummary.stop || outageSummary.needs
+                    ? ""
+                    : "Nothing stops",
+                  ...summaryParts(outageSummary),
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+                {". "}
+                <Link
+                  component="button"
+                  variant="body2"
+                  onClick={() =>
+                    impactRef.current?.scrollIntoView?.({ behavior: "smooth" })
+                  }
+                >
+                  Show the list
+                </Link>
+              </Typography>
+            </>
+          ) : (
+            <Typography variant="body2" color="text.secondary">
+              nothing yet. Click a box to mark it; click again to bring it back.
+            </Typography>
+          )}
+        </Box>
+        {outside.length || addrs.size ? (
+          <>
+            <Heading>Outside the clusters</Heading>
+            {cardRow(
+              <>
+                {outside.map((p) =>
+                  unitCard(
+                    p.id,
+                    info(p.id).type,
+                    p.name,
+                    p.note ?? p.match.slice(0, 2).join(", "),
+                  ),
+                )}
+                {[...addrs].flatMap(([pid, ips]) =>
+                  ips.map((ip) =>
+                    unitCard(
+                      addrUnit(pid, ip),
+                      "storage",
+                      unitName(addrUnit(pid, ip)),
+                      "one host",
+                    ),
+                  ),
+                )}
+              </>,
+            )}
+          </>
+        ) : null}
+        {estate.clusters.map((c) => {
+          const cu = `cluster:${c.name}`;
+          return (
+            <Box key={c.name} component="section" aria-label={c.name}>
+              <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                <Heading>{`${c.name} · ${c.machines.length} machines`}</Heading>
+                <ToggleButton
+                  value="cluster"
+                  size="small"
+                  selected={down.has(cu)}
+                  onChange={() => toggle(cu, true)}
+                  sx={{ textTransform: "none", py: 0.1, mt: 1 }}
+                >
+                  Mark whole cluster
+                </ToggleButton>
+              </Box>
+              {cardRow(
+                [...c.machines]
+                  .sort(
+                    (a, b) =>
+                      Number(b.controlPlane) - Number(a.controlPlane) ||
+                      a.name.localeCompare(b.name),
+                  )
+                  .map((m) =>
+                    unitCard(
+                      m.id,
+                      "node",
+                      m.name,
+                      `${m.controlPlane ? "control plane" : "worker"} · ${m.ip}`,
+                    ),
+                  ),
+              )}
+            </Box>
+          );
+        })}
+        {vms.length ? (
+          <>
+            <Heading>Servers</Heading>
+            {cardRow(
+              vms.map((h) => unitCard(`vm:${h}`, "server", h, "server host")),
+            )}
+          </>
+        ) : null}
+        {inet.length ? (
+          <>
+            <Heading>Internet</Heading>
+            {cardRow(
+              inet.map((p) =>
+                unitCard(
+                  p.id,
+                  "internet",
+                  p.id === OTHER_INTERNET_ID
+                    ? "Other internet addresses"
+                    : p.name,
+                  "provider",
+                ),
+              ),
+            )}
+          </>
+        ) : null}
+        {down.size ? (
+          <Box ref={impactRef} sx={{ maxWidth: 820 }}>
+            <Heading>{`Stop · ${count(stops)}`}</Heading>
+            {count(stops) ? (
+              effectRows(stops, "bad")
+            ) : (
+              <Empty>Nothing stops.</Empty>
+            )}
+            <Heading>{`Lose a dependency · ${count(needs)}`}</Heading>
+            {count(needs) ? (
+              effectRows(needs, "bad")
+            ) : (
+              <Empty>Nothing calls what stopped.</Empty>
+            )}
+            {count(via) ? (
+              <>
+                <Heading>{`May break, further away · ${count(via)}`}</Heading>
+                {effectRows(via, "via")}
+              </>
+            ) : null}
+            {outage.hosts.size ? (
+              <>
+                <Heading>{`Machines that lose something · ${outage.hosts.size}`}</Heading>
+                {[...outage.hosts].map(([m, e]) => (
+                  <Row
+                    key={m}
+                    icon="node"
+                    name={locName(m)}
+                    meta={e.why}
+                    rate={e.bps ? rate(e.bps) : undefined}
+                    tone="bad"
+                    onClick={() => setFocus(m)}
+                  />
+                ))}
+              </>
+            ) : null}
+            {count(reduced) ? (
+              <>
+                <Heading>{`Still run, on fewer machines · ${count(reduced)}`}</Heading>
+                {effectRows(reduced, "warn", 8)}
+              </>
+            ) : null}
+            {count(risk) ? (
+              <>
+                <Heading>{`Call something with less headroom · ${count(risk)}`}</Heading>
+                {effectRows(risk, "warn", 8)}
+              </>
+            ) : null}
+          </Box>
+        ) : null}
+      </>
+    );
+
+    const fe = focus
+      ? (outage.effects.get(focus) ?? outage.hosts.get(focus))
+      : undefined;
+    const top = ranking.slice(0, 10).filter((r) => outageScore(r.summary) > 0);
+    const worst = top.length ? outageScore(top[0]!.summary) : 1;
+    side =
+      focus && fe ? (
+        <>
+          <Ellipsis
+            text={locName(focus) || info(focus).name}
+            variant="subtitle2"
+          />
+          <Typography variant="body2" sx={{ mt: 0.5 }}>
+            {fe.why}
+          </Typography>
+          <Heading>Breaks along</Heading>
+          {chainOf(outage, focus).map((x) => {
+            const i = info(x);
+            const e = outage.effects.get(x);
+            return (
+              <Row
+                key={x}
+                icon={i.type}
+                name={i.name}
+                meta={e?.why}
+                tone={e && (e.s === "down" || e.s === "gone") ? "bad" : "via"}
+                onClick={
+                  outage.effects.get(x)?.via ? () => setFocus(x) : undefined
+                }
+              />
+            );
+          })}
+          <Button
+            size="small"
+            sx={{ mt: 1.5, textTransform: "none" }}
+            onClick={() => setFocus(undefined)}
+          >
+            Back to the summary
+          </Button>
+          {model.byId.has(focus) ? (
+            <Button
+              size="small"
+              sx={{ mt: 1.5, textTransform: "none" }}
+              onClick={() => {
+                props.onMode("map");
+                go(`deps:${focus}`);
+              }}
+            >
+              Open its dependencies
+            </Button>
+          ) : null}
+        </>
+      ) : (
+        <>
+          <Typography variant="subtitle2">If unreachable</Typography>
+          {down.size ? (
+            <>
+              <Kv
+                rows={[
+                  ["Stop", outageSummary.stop],
+                  ["Lose a dependency", outageSummary.needs],
+                  ["May break, further away", outageSummary.via],
+                  ["Machines that lose something", outageSummary.hosts],
+                  ["On fewer machines", outageSummary.reduced],
+                  ["Less headroom", outageSummary.risk],
+                  ["Namespaces hit", outageSummary.namespaces.size],
+                ]}
+              />
+            </>
+          ) : (
+            <Note>
+              Mark a machine, a cluster, a server host or a place as unreachable
+              and see, from the flows measured, what stops and what loses a
+              dependency. Several can be marked at once.
+            </Note>
+          )}
+          <Heading>What hurts most, one at a time</Heading>
+          {top.length ? (
+            top.map((r) => (
+              <ButtonBase
+                key={r.unit}
+                onClick={(ev) =>
+                  ev.shiftKey
+                    ? toggle(r.unit, true)
+                    : setDown(new Set([r.unit]))
+                }
+                aria-label={`Try ${unitName(r.unit)} alone`}
+                sx={{
+                  display: "block",
+                  width: "100%",
+                  textAlign: "left",
+                  py: 0.5,
+                  borderRadius: 0.5,
+                  "&:hover, &.Mui-focusVisible": { bgcolor: "action.hover" },
+                }}
+              >
+                <Box sx={{ display: "flex", gap: 1, minWidth: 0 }}>
+                  <Box sx={{ minWidth: 0, flex: 1 }}>
+                    <Ellipsis text={unitName(r.unit)} variant="body2" />
+                  </Box>
+                  <Typography variant="caption" color="text.secondary">
+                    {summaryParts(r.summary).slice(0, 2).join(", ")}
+                  </Typography>
+                </Box>
+                <Box
+                  sx={{
+                    height: 4,
+                    mt: 0.25,
+                    borderRadius: 2,
+                    bgcolor: down.has(r.unit) ? "error.main" : "error.light",
+                    opacity: down.has(r.unit) ? 1 : 0.6,
+                    width: `${Math.max(4, (outageScore(r.summary) / worst) * 100)}%`,
+                  }}
+                />
+              </ButtonBase>
+            ))
+          ) : (
+            <Empty>Nothing loses a dependency on its own.</Empty>
+          )}
+          <Note>Click to try one alone; shift-click to add it.</Note>
+          <Heading>What the flows cannot tell</Heading>
+          <Note>
+            Only traffic seen in the time range counts: a replica or a fallback
+            that stayed quiet is not known. Nothing reschedules here, so this is
+            the first minutes, before pods move. Retries, caches and failover
+            inside an application are not visible in flows.
+          </Note>
+        </>
+      );
+  } else if (nav === "estate") {
     arrows = true;
     const group = (loc: string): string => {
       const g = estateGroup(estate, loc);
@@ -1406,6 +2007,16 @@ export function EstateView(props: EstateViewProps): ReactElement {
         ) : (
           <Empty>No links after filtering.</Empty>
         )}
+        {unreachableButton(`cluster:${block?.name ?? nav.slice(8)}`)}
+        <Heading>Firewall</Heading>
+        <Note>
+          Every opening across this cluster&apos;s boundary, in and out.
+        </Note>
+        {copyButton(
+          `fw:${nav}`,
+          "Copy firewall rules",
+          formatRules(firewallRulesForCluster(model, nav.slice(8))),
+        )}
       </>
     );
   } else if (estate.machines.has(nav)) {
@@ -1647,6 +2258,7 @@ export function EstateView(props: EstateViewProps): ReactElement {
         ) : (
           <Empty>Nothing after filtering.</Empty>
         )}
+        {unreachableButton(m.id)}
       </>
     );
   } else if (nav === "internet") {
@@ -1891,14 +2503,18 @@ export function EstateView(props: EstateViewProps): ReactElement {
                 onClick={() => go(`deps:${n.id}`)}
               />
             ))}
-          <Button
-            size="small"
-            variant="outlined"
-            sx={{ mt: 1.5, textTransform: "none" }}
-            onClick={props.onOpenLanes}
-          >
-            Open in Lanes (waves, firewall rules)
-          </Button>
+          {wavesOf(model).length ? (
+            <>
+              <Heading>Firewall rules per migration wave</Heading>
+              {wavesOf(model).map((w) =>
+                copyButton(
+                  `wave:${w}`,
+                  `Copy wave ${w}`,
+                  formatRules(firewallRulesForWave(model, w)),
+                ),
+              )}
+            </>
+          ) : null}
         </>
       );
     } else if (p?.kind === "services") {
@@ -2004,6 +2620,7 @@ export function EstateView(props: EstateViewProps): ReactElement {
         />
         {sideBody}
         <Note>Rows open the service&apos;s dependencies.</Note>
+        {isUnit(outageInput, pid) ? unreachableButton(pid) : null}
       </>
     );
   } else if (nav.startsWith("deps:")) {
@@ -2203,6 +2820,18 @@ export function EstateView(props: EstateViewProps): ReactElement {
         </Box>
       </>
     );
+    const node = model.byId.get(id);
+    const nodeHref =
+      o.links.node && node
+        ? safeHref(
+            fillTemplate(o.links.node, {
+              service: node.id,
+              name: node.name,
+              host: node.instances[0]?.host ?? "",
+              hosts: node.instances.map((i) => i.host).join(","),
+            }),
+          )
+        : undefined;
     side = (
       <>
         <Ellipsis text={self.name} variant="subtitle2" />
@@ -2259,6 +2888,19 @@ export function EstateView(props: EstateViewProps): ReactElement {
           Counted over the flows shown: turn off a filter to include more.{" "}
           {downAll.size} things downstream within reach.
         </Note>
+        {nodeHref ? (
+          <Box sx={{ mt: 1 }}>
+            <Link
+              href={nodeHref}
+              variant="body2"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Open details
+            </Link>
+          </Box>
+        ) : null}
+        {model.byId.get(id)?.kind === "internal" ? unreachableButton(id) : null}
       </>
     );
   } else {
@@ -2353,7 +2995,11 @@ export function EstateView(props: EstateViewProps): ReactElement {
         ) : null}
         <Autocomplete
           size="small"
-          options={allOptions}
+          options={
+            props.mode === "outage"
+              ? allOptions.filter((x) => isUnit(outageInput, unitOfGo(x.go)))
+              : allOptions
+          }
           getOptionLabel={(x) => x.label}
           groupBy={undefined}
           renderOption={(p, x) => (
@@ -2370,12 +3016,23 @@ export function EstateView(props: EstateViewProps): ReactElement {
           )}
           value={null}
           blurOnSelect
-          onChange={(_, x) => x && go(x.go)}
+          onChange={(_, x) => {
+            if (!x) return;
+            if (props.mode === "outage") {
+              const u = unitOfGo(x.go);
+              setFocus(undefined);
+              setDown((d) => new Set([...d, u]));
+            } else go(x.go);
+          }}
           sx={{ width: narrow ? 140 : 220, flexShrink: 0 }}
           renderInput={(p) => (
             <TextField
               {...p}
-              placeholder="Find a workload…"
+              placeholder={
+                props.mode === "outage"
+                  ? "Mark unreachable…"
+                  : "Find a workload…"
+              }
               aria-label="Find"
             />
           )}

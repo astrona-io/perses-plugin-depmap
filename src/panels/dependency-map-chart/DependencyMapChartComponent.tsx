@@ -1,12 +1,11 @@
 import { ReactElement, useMemo } from "react";
-import { Box, Typography, alpha, useTheme } from "@mui/material";
-import { LoadingOverlay, useChartsTheme } from "@perses-dev/components";
+import { Box, Typography } from "@mui/material";
+import { LoadingOverlay } from "@perses-dev/components";
 import {
   DependencyMapChartProps,
   resolveOptions,
 } from "./dependency-map-chart-types";
 import { DependencyMapView } from "./DependencyMapView";
-import { Palette } from "./chart-option";
 import { parseMapping } from "./mapping";
 import { buildModel } from "./model";
 import { useDepmapData } from "./useDepmapData";
@@ -40,8 +39,6 @@ export function DependencyMapChartComponent(
   props: DependencyMapChartProps,
 ): ReactElement | null {
   const { spec, contentDimensions } = props;
-  const theme = useTheme();
-  const chartsTheme = useChartsTheme();
   const o = useMemo(() => resolveOptions(spec), [spec]);
   const parsed = useMemo(() => parseMapping(o.mapping), [o.mapping]);
   const data = useDepmapData(spec, o, parsed.mapping);
@@ -68,24 +65,6 @@ export function DependencyMapChartComponent(
       data.windowHours,
       o.clusterName,
     ],
-  );
-
-  const palette: Palette = useMemo(
-    () => ({
-      text: theme.palette.text.primary,
-      textSecondary: theme.palette.text.secondary,
-      divider: theme.palette.divider,
-      paper: theme.palette.background.paper,
-      background: theme.palette.background.default,
-      error: theme.palette.error.main,
-      warning: theme.palette.warning.main,
-      primary: theme.palette.primary.main,
-      secondary: theme.palette.secondary.main,
-      info: theme.palette.info.main,
-      success: theme.palette.success.main,
-      alpha: (c, a) => alpha(c, a),
-    }),
-    [theme],
   );
 
   if (!contentDimensions) return null;
@@ -116,13 +95,9 @@ export function DependencyMapChartComponent(
           model={model}
           o={o}
           mapping={parsed.mapping}
-          mappingText={o.mapping}
           mappingErrors={parsed.errors}
-          palette={palette}
-          echartsTheme={chartsTheme.echartsTheme}
           width={width}
           height={height}
-          nowSeconds={data.endSeconds}
           sources={data.results?.sources}
         />
       ) : null}
