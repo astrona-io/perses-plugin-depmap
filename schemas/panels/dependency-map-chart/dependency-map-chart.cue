@@ -32,6 +32,7 @@ spec: close({
 		daily?:      #share
 		weekly?:     #share
 	})
+	// Only showExternal is used since v0.4.0; the rest is accepted so older dashboards still load.
 	lanes?: close({
 		// Label per wave number, e.g. {"1": "Wave 1 (March)"}.
 		waveLabels?: {[=~"^[0-9]+$"]: string}
@@ -43,15 +44,17 @@ spec: close({
 	edgeFilter?: [...#frequency]
 	linkTemplates?: close({
 		node?: string
+		// Ignored since v0.4.0.
 		edge?: string
 	})
-	// Preset failure scenarios: instance hosts (or IPs of unknown nodes) to take down.
+	// Ignored since v0.4.0; accepted so older dashboards still load.
 	scenarios?: [...close({
 		name: string & !=""
 		down: [string, ...string]
 	})]
-	defaultMode?: "map" | "failure" | "needs"
-	// View the map mode opens in: the estate drill-down or the migration lanes.
+	// Mode the panel opens in. "failure" (opens as outage) and "needs" (opens as map) are from before v0.4.0.
+	defaultMode?: "map" | "outage" | "failure" | "needs"
+	// Ignored since v0.4.0; accepted so older dashboards still load.
 	defaultView?: "estate" | "lanes"
 	// Unit rates open in.
 	rateUnit?: "s" | "min" | "h" | "auto"

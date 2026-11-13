@@ -7,7 +7,7 @@
 #
 # See "Install into Perses" in README.md.
 FROM scratch
-ARG VERSION=0.3.0
+ARG VERSION=0.4.0
 COPY DepMap-${VERSION}.tar.gz /
 LABEL org.opencontainers.image.title="perses-plugin-depmap" \
       org.opencontainers.image.description="Perses DependencyMapChart panel plugin archive (for an image volume)" \

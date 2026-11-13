@@ -6,6 +6,32 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-13
+
+### Added
+
+- **If unreachable** mode: mark machines, whole clusters, server hosts, load balancers, storage (or
+  one storage host), LANs or internet providers as unreachable and see what stops, what loses a
+  dependency, what may break further away, which machines lose something, what runs on fewer machines
+  and what calls something with less headroom. Every row says why; a click shows the chain it breaks
+  along.
+- **What hurts most, one at a time**: every unit tried alone, ranked by impact; click to try it,
+  shift-click to add it.
+- **What if it is unreachable?** on every machine, cluster, server and place in the map.
+- **Copy firewall rules** for a cluster's boundary, and **Copy wave N** on the Servers page.
+- **Open details** link (`linkTemplates.node`) in a workload's dependencies.
+
+### Changed
+
+- `defaultMode` is `map` or `outage`. A saved `failure` opens as `outage`, `needs` as `map`.
+
+### Removed
+
+- The What if, Needs and Lanes views, with presets (`scenarios`), the wave selector and **Copy updated
+  mapping**. HA types in the mapping no longer change the outcome. `scenarios`, `defaultView`,
+  `lanes.waveLabels`, `lanes.stayLabel`, `lanes.externalLabel` and `linkTemplates.edge` are still
+  accepted and ignored, so older dashboards load.
+
 ## [0.3.0] - 2026-11-13
 
 ### Added
@@ -83,7 +109,8 @@ All notable changes to this project are documented here. The format follows
 - A `dev/` stack: a fake legacy estate of twenty containers on an accelerated clock, 30 days of
   backfilled history, Prometheus and Perses with a ready dashboard.
 
-[Unreleased]: https://github.com/astrona-io/perses-plugin-depmap/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/astrona-io/perses-plugin-depmap/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/astrona-io/perses-plugin-depmap/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/astrona-io/perses-plugin-depmap/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/astrona-io/perses-plugin-depmap/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/astrona-io/perses-plugin-depmap/releases/tag/v0.1.0

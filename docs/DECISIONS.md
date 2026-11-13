@@ -268,7 +268,7 @@ flow across nodes; the node and the VM for SNATed traffic). Summing doubled them
 full label set keeps one count per distinct flow description; stitching then removes the remaining
 duplicates. Custom `queries.edge` from 0.1 keep working.
 
-## 23. Estate view first, lanes kept
+## 23. Estate view first, lanes kept (superseded by 28)
 
 The lanes view answers migration questions (waves, firewall rules, What if) but not "where does this
 run and what is around it" in a mostly-Kubernetes estate with storage, load balancers and the
@@ -305,3 +305,22 @@ Drill-down position, hops, expanded rows and Hide monitoring are React state in 
 parameters or dashboard variables: Perses has no API for a panel to own query parameters, and writing
 variables from a panel would change every other panel on the dashboard.
 
+## 28. One "If unreachable" mode replaces What if, Needs and Lanes
+
+What people asked of the map in practice was one question: what happens if this unit is not
+reachable? What if answered it per instance chip on the lanes view, which only knew mapped services and
+their HA rules, not Kubernetes machines, storage hosts or load balancers. Needs and Lanes were planning
+views around it. v0.4.0 drops all three for one mode over the estate's own units: a machine, a whole
+cluster, a server host, a place (load balancer, storage, LAN, internet provider) or one storage host.
+
+The rules are what the flows can show. A workload whose every machine is unreachable stops; with some
+left it runs on fewer machines, and its callers have less headroom. A caller of something that stopped
+loses a dependency, and up to four hops further callers may break. A caller that only ever connected
+to one instance loses the service when that instance's machine goes, even though others are left. The
+HA types in the mapping (quorum, active-passive, minUp, load) no longer change the outcome: they were
+claims about failover that no flow confirms, and the panel says what it cannot tell instead.
+
+Waves stay in the mapping; their firewall rules are on the Servers page. `scenarios`, `defaultView`,
+the wave, stay and external labels and the edge link are still accepted by the schema and ignored, so
+dashboards saved with v0.3.x load unchanged. `defaultMode: failure` opens the new mode, `needs` the
+map.

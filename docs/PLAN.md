@@ -29,9 +29,9 @@ buildModel(mapping, samples, thresholds, windowHours) ─> Model
   edges: service -> service per port, with frequency class, bytes/day, last seen,
          caller instance -> callee instances (pairs) and hard-wired flags (pins)
 
-Model + filters ─> layout (lanes) ─> chart option ─> GraphCanvas (ECharts)
-Model + down hosts ─> evaluate (failure.ts) ─> state and reason per node
-Model ─> loseOneServer, hardWiredClients, needsOf, firewallRules
+Model + filters ─> estate (estate.ts) ─> EstateView: drill-down, place pages, dependencies
+Model + estate + unreachable units ─> simulate (outage.ts) ─> state and reason per service and machine
+Model + estate ─> rankUnits (every unit alone, worst first), firewallRules per cluster and wave
 ```
 
 ## Pure modules (all unit-tested)
@@ -41,34 +41,33 @@ Model ─> loseOneServer, hardWiredClients, needsOf, firewallRules
 | `mapping.ts` | Parse YAML/JSON, validate against the schema with paths in errors, keep what is valid, write a changed wave back with comments kept |
 | `queries.ts` | Window parsing, Prometheus matrix to `EdgeSample`, OBI and fallback labels, inbound series turned around |
 | `model.ts` | IP to node resolution (instances, VIPs, CIDR and name externals, unknowns), frequency classes, edges, pairs, hard-wired detection |
-| `failure.ts` | Per-service state from instances down (single, active-passive, active-active with minUp and load, quorum), transitive propagation to callers, at-risk callers, hard-wired breakage, lose-one-server ranking, transitive needs |
+| `estate.ts` | Machines, clusters and places from the model; hops between locations; workloads per machine |
+| `outage.ts` | Units that can be unreachable (machines, clusters, servers, places, storage hosts); what stops, loses a dependency, may break, runs on fewer machines or has less headroom; pinned callers; the ranking of single units |
 | `firewall.ts` | Zones per wave (new, old, outside), rules per instance for edges that cross zones, VIP handling, copyable text |
-| `layout.ts` | Lane columns: waves, stays, outside; sub-columns when a lane is crowded; no overlaps |
-| `chart-option.ts` | ECharts graph option: nodes, chips, lane headers, edge styles per class and state, tooltips |
 
 ## Component tree
 
 ```
 DependencyMapChart (PanelPlugin)
 ├─ DependencyMapChartComponent      queries (useDepmapData), parse, model, empty/error states
-│  └─ DependencyMapView             mode, filters, selection, down set, wave overrides
-│     ├─ toolbar                    Map / What if / Needs, frequency checkboxes, sources, details toggle
-│     ├─ GraphCanvas                ECharts canvas (from perses-plugin-servicegraph)
-│     └─ SidePanel                  scenario summary, presets, lose one server, hard-wired clients,
-│                                   service or edge details, wave selector, firewall rules, easy to miss
+│  └─ DependencyMapView             mode, filters, rate unit, details toggle
+│     ├─ toolbar                    Map / If unreachable, frequency checkboxes, sources, details toggle
+│     └─ EstateView                 Map: drill-down and side panel; If unreachable: units, impact,
+│                                   ranking, the chain an effect breaks along
 └─ DependencyMapChartSettingsEditor every spec option
 ```
 
 ## Schema
 
 `schemas/panels/dependency-map-chart/dependency-map-chart.cue`: `datasource`, `queries` (edge,
-fallback, volume), `mapping`, `window`, `frequencyThresholds`, `lanes` (waveLabels, stayLabel,
-externalLabel, showExternal), `edgeFilter`, `linkTemplates` (node, edge), `scenarios`, `defaultMode`.
+fallback, volume), `mapping`, `window`, `frequencyThresholds`, `lanes` (only showExternal is
+used), `edgeFilter`, `linkTemplates` (node), `defaultMode` (map or outage). `scenarios`, `defaultView`,
+the other `lanes` fields and `linkTemplates.edge` are accepted and ignored, so older dashboards load.
 Valid and invalid examples under `tests/`.
 
 ## Open questions (answered in DECISIONS.md)
 
 - Where does OBI run in dev/? (3: nowhere, rootless podman cannot create BPF maps.)
 - Does the map need OBI application metrics? (4: no.)
-- What does the scenario do with filtered edges? (7: evaluates what is shown.)
+- What does If unreachable do with filtered edges? (7: evaluates what is shown.)
 - How does a monthly job appear in a demo? (11: accelerated clock plus backfill.)

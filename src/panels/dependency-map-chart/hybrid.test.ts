@@ -7,18 +7,11 @@ import {
 } from "../../test-utils/hybrid";
 import { DEFAULT_THRESHOLDS } from "./dependency-map-chart-types";
 import {
-  evaluateFailure,
-  expandDown,
-  hopChains,
-  loseOneServer,
-} from "./failure";
-import {
   firewallRulesForCluster,
   firewallRulesForWave,
   formatRule,
   wavesOf,
 } from "./firewall";
-import { laneSpecs, layoutGraph } from "./layout";
 import { buildModel } from "./model";
 
 const PRICING = `k8s:${CLUSTER}/shop/pricing`;
@@ -131,52 +124,6 @@ describe("hybrid estate: model", () => {
   });
 });
 
-describe("hybrid estate: failure across the boundary", () => {
-  const m = hybridModel();
-
-  it("a node down takes its pods with it", () => {
-    const down = expandDown(m, ["worker2"]);
-    expect(down.has("orders-7d9f-b")).toBe(true);
-    expect(down.has("pricing-5c6b-b")).toBe(true);
-    expect(down.has("orders-7d9f-a")).toBe(false);
-  });
-
-  it("worker2 down: the VM pinned to its NodePort breaks, the workloads run reduced", () => {
-    const r = evaluateFailure(m, ["worker2"]);
-    expect(r.services.get("billing")?.state).toBe("broken");
-    expect(r.services.get("billing")?.reason).toContain("worker2");
-    expect(r.services.get("orders")?.state).toBe("reduced");
-    expect(r.services.get("orders")?.reason).toContain(
-      "Kubernetes reschedules",
-    );
-    expect(r.services.get(PRICING)?.state).toBe("reduced");
-    expect(r.services.get(NAT)?.state).toBe("down");
-    expect(r.services.get("oracle")?.state).toBe("ok");
-  });
-
-  it("losing one server lists each node once and finds the pinned NodePort", () => {
-    const spofs = loseOneServer(m);
-    const hosts = spofs.map((s) => s.host);
-    expect(new Set(hosts).size).toBe(hosts.length);
-    expect(hosts).toContain("worker2");
-  });
-
-  it("the hop chain through a workload runs from the VM caller to the VM it calls", () => {
-    const c = hopChains(m, "orders");
-    expect([...c.nodes].sort()).toEqual(
-      ["billing", "oracle", "orders", PRICING].sort(),
-    );
-    const ids = new Set(
-      m.edges
-        .filter((e) => c.edges.has(e.id))
-        .map((e) => `${e.source}->${e.target}`),
-    );
-    expect(ids).toEqual(
-      new Set(["billing->orders", `orders->${PRICING}`, "orders->oracle"]),
-    );
-  });
-});
-
 describe("hybrid estate: firewall at the cluster boundary", () => {
   const m = hybridModel();
 
@@ -222,26 +169,5 @@ describe("hybrid estate: firewall at the cluster boundary", () => {
     expect(lines).toContain(
       "app03 (10.1.1.13) -> worker2 (10.1.8.12):30080/tcp",
     );
-  });
-});
-
-describe("hybrid estate: layout", () => {
-  it("a Kubernetes lane per cluster between the waves and what stays", () => {
-    const m = hybridModel();
-    const labels = {
-      waveLabels: {},
-      stayLabel: "Stays",
-      externalLabel: "Outside",
-    };
-    expect(laneSpecs(m.nodes, labels).map((l) => l.label)).toEqual([
-      "Wave 2",
-      `Kubernetes · ${CLUSTER}`,
-      "Stays",
-    ]);
-    const l = layoutGraph(m.nodes, m.edges, laneSpecs(m.nodes, labels));
-    const lane = (id: string): string => l.nodes.get(id)!.lane;
-    expect(lane("orders")).toBe(`k8s:${CLUSTER}`);
-    expect(lane(NAT)).toBe(`k8s:${CLUSTER}`);
-    expect(lane("oracle")).toBe("stay");
   });
 });
