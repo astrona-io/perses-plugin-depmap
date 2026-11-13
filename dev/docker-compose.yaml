@@ -264,7 +264,7 @@ services:
     networks: [mgmt]
 
   backfill:
-    image: docker.io/prom/prometheus:v3.5.0
+    image: docker.io/prom/prometheus:v3.16.0
     entrypoint: ["/bin/sh", "/dev-depmap/backfill.sh"]
     environment:
       DEPMAP_BACKFILL_DAYS: "${DEPMAP_BACKFILL_DAYS:-30}"
@@ -276,7 +276,7 @@ services:
     restart: "no"
 
   prometheus:
-    image: docker.io/prom/prometheus:v3.5.0
+    image: docker.io/prom/prometheus:v3.16.0
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
