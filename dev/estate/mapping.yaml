@@ -1,0 +1,101 @@
+# Mapping for the example estate in dev/. Everything here is invented: example addresses (10.1.0.0/16 for
+# the old data centre, 198.51.100.0/24 from RFC 5737 for the outside world) and example names.
+# The same file drives the unit tests (src/test-utils/estate.ts).
+services:
+  - id: lb
+    name: load balancer
+    owner: network team
+    wave: 1
+    ha: active-passive
+    process: haproxy · keepalived
+    vip: 10.1.1.10
+    instances:
+      - { host: edge01, ip: 10.1.1.1, role: primary }
+      - { host: edge02, ip: 10.1.1.2, role: standby }
+  - id: api
+    name: api-gw
+    owner: platform team
+    wave: 1
+    process: nginx
+    instances:
+      - { host: app02, ip: 10.1.1.12 }
+  - id: portal
+    name: portal
+    owner: web team
+    wave: 1
+    ha: active-active
+    load: 65
+    process: tomcat
+    vip: 10.1.1.20
+    instances:
+      - { host: app01, ip: 10.1.1.11 }
+      - { host: app04, ip: 10.1.1.14 }
+  - id: billing
+    name: billing
+    owner: finance IT
+    wave: 2
+    process: java
+    instances:
+      - { host: app03, ip: 10.1.1.13 }
+  - id: erp
+    name: erp-sync
+    owner: finance IT
+    wave: 2
+    process: erpsync.exe
+    instances:
+      - { host: win05, ip: 10.1.1.25 }
+  - id: reports
+    name: reports
+    owner: finance IT
+    wave: 2
+    process: cron · reportgen
+    instances:
+      - { host: batch01, ip: 10.1.3.1 }
+  - id: import
+    name: file-import
+    owner: integration team
+    wave: 2
+    process: cron · importer
+    instances:
+      - { host: batch02, ip: 10.1.3.2 }
+  - id: oracle
+    name: oracle
+    owner: DBA team
+    wave: 3
+    ha: active-passive
+    process: oracle · Data Guard
+    vip: 10.1.2.10
+    instances:
+      - { host: db01, ip: 10.1.2.1, role: primary }
+      - { host: db02, ip: 10.1.2.2, role: standby }
+  - id: mq
+    name: message queue
+    owner: integration team
+    wave: 3
+    process: mq broker
+    instances:
+      - { host: mq01, ip: 10.1.2.21 }
+  - id: ldap
+    name: ldap
+    owner: identity team
+    ha: quorum
+    process: slapd
+    instances:
+      - { host: ldap01, ip: 10.1.4.1 }
+      - { host: ldap02, ip: 10.1.4.2 }
+      - { host: ldap03, ip: 10.1.4.3 }
+  - id: nfs
+    name: nfs
+    owner: storage team
+    process: nfsd
+    instances:
+      - { host: nfs01, ip: 10.1.4.10 }
+  - id: smtp
+    name: smtp relay
+    owner: messaging team
+    process: postfix
+    instances:
+      - { host: smtp01, ip: 10.1.4.20 }
+external:
+  - { match: 198.51.100.21, name: ftp.partner.example.com, owner: partner }
+  - { match: 198.51.100.43, name: bank-api.example.com, owner: bank }

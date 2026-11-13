@@ -1,0 +1,322 @@
+# The example estate for the Dependency map panel: twenty containers that behave like the servers in
+# dev/estate/mapping.yaml and flows.tsv, the fallback collector on each, node_exporter, a Prometheus that
+# starts with 30 days of backfilled history, and Perses with the plugin. Works with `podman compose`
+# and `docker compose`; see the README ("Try it locally").
+#
+# OBI is not used here: rootless podman cannot create the eBPF maps OBI needs (see docs/DECISIONS.md).
+# Every server runs collect/fallback/depmap-snapshot.sh instead, exactly as a real server would.
+name: perses-plugin-depmap
+
+x-server: &server
+  build:
+    context: ./server
+    dockerfile: Containerfile
+  image: localhost/perses-plugin-depmap-server:dev
+  volumes:
+    - ./server/server.sh:/dev-depmap/server.sh:ro,z
+    - ../collect/fallback/depmap-snapshot.sh:/dev-depmap/depmap-snapshot.sh:ro,z
+    - ./estate/flows.tsv:/estate/flows.tsv:ro,z
+    - textfile:/textfile
+  restart: unless-stopped
+
+services:
+  edge01:
+    <<: *server
+    hostname: edge01
+    environment:
+      DEPMAP_HOST: edge01
+      DEPMAP_IP: 10.1.1.1
+      DEPMAP_CLOCK_SPEED: "${DEPMAP_CLOCK_SPEED:-1440}"
+    networks:
+      olddc:
+        ipv4_address: 10.1.1.1
+
+  app01:
+    <<: *server
+    hostname: app01
+    environment:
+      DEPMAP_HOST: app01
+      DEPMAP_IP: 10.1.1.11
+      DEPMAP_CLOCK_SPEED: "${DEPMAP_CLOCK_SPEED:-1440}"
+    networks:
+      olddc:
+        ipv4_address: 10.1.1.11
+
+  app02:
+    <<: *server
+    hostname: app02
+    environment:
+      DEPMAP_HOST: app02
+      DEPMAP_IP: 10.1.1.12
+      DEPMAP_CLOCK_SPEED: "${DEPMAP_CLOCK_SPEED:-1440}"
+    networks:
+      olddc:
+        ipv4_address: 10.1.1.12
+
+  app03:
+    <<: *server
+    hostname: app03
+    environment:
+      DEPMAP_HOST: app03
+      DEPMAP_IP: 10.1.1.13
+      DEPMAP_CLOCK_SPEED: "${DEPMAP_CLOCK_SPEED:-1440}"
+      DEPMAP_ROUTES: "198.51.100.43=10.1.9.43"
+    cap_add: [NET_ADMIN]
+    networks:
+      olddc:
+        ipv4_address: 10.1.1.13
+
+  app04:
+    <<: *server
+    hostname: app04
+    environment:
+      DEPMAP_HOST: app04
+      DEPMAP_IP: 10.1.1.14
+      DEPMAP_CLOCK_SPEED: "${DEPMAP_CLOCK_SPEED:-1440}"
+    networks:
+      olddc:
+        ipv4_address: 10.1.1.14
+
+  win05:
+    <<: *server
+    hostname: win05
+    environment:
+      DEPMAP_HOST: win05
+      DEPMAP_IP: 10.1.1.25
+      DEPMAP_CLOCK_SPEED: "${DEPMAP_CLOCK_SPEED:-1440}"
+    networks:
+      olddc:
+        ipv4_address: 10.1.1.25
+
+  batch01:
+    <<: *server
+    hostname: batch01
+    environment:
+      DEPMAP_HOST: batch01
+      DEPMAP_IP: 10.1.3.1
+      DEPMAP_CLOCK_SPEED: "${DEPMAP_CLOCK_SPEED:-1440}"
+      DEPMAP_ROUTES: "198.51.100.21=10.1.9.21"
+    cap_add: [NET_ADMIN]
+    networks:
+      olddc:
+        ipv4_address: 10.1.3.1
+
+  batch02:
+    <<: *server
+    hostname: batch02
+    environment:
+      DEPMAP_HOST: batch02
+      DEPMAP_IP: 10.1.3.2
+      DEPMAP_CLOCK_SPEED: "${DEPMAP_CLOCK_SPEED:-1440}"
+    networks:
+      olddc:
+        ipv4_address: 10.1.3.2
+
+  db01:
+    <<: *server
+    hostname: db01
+    environment:
+      DEPMAP_HOST: db01
+      DEPMAP_IP: 10.1.2.1
+      DEPMAP_CLOCK_SPEED: "${DEPMAP_CLOCK_SPEED:-1440}"
+    networks:
+      olddc:
+        ipv4_address: 10.1.2.1
+
+  mq01:
+    <<: *server
+    hostname: mq01
+    environment:
+      DEPMAP_HOST: mq01
+      DEPMAP_IP: 10.1.2.21
+      DEPMAP_CLOCK_SPEED: "${DEPMAP_CLOCK_SPEED:-1440}"
+    networks:
+      olddc:
+        ipv4_address: 10.1.2.21
+
+  ldap01:
+    <<: *server
+    hostname: ldap01
+    environment:
+      DEPMAP_HOST: ldap01
+      DEPMAP_IP: 10.1.4.1
+      DEPMAP_CLOCK_SPEED: "${DEPMAP_CLOCK_SPEED:-1440}"
+    networks:
+      olddc:
+        ipv4_address: 10.1.4.1
+
+  ldap02:
+    <<: *server
+    hostname: ldap02
+    environment:
+      DEPMAP_HOST: ldap02
+      DEPMAP_IP: 10.1.4.2
+      DEPMAP_CLOCK_SPEED: "${DEPMAP_CLOCK_SPEED:-1440}"
+    networks:
+      olddc:
+        ipv4_address: 10.1.4.2
+
+  ldap03:
+    <<: *server
+    hostname: ldap03
+    environment:
+      DEPMAP_HOST: ldap03
+      DEPMAP_IP: 10.1.4.3
+      DEPMAP_CLOCK_SPEED: "${DEPMAP_CLOCK_SPEED:-1440}"
+    networks:
+      olddc:
+        ipv4_address: 10.1.4.3
+
+  nfs01:
+    <<: *server
+    hostname: nfs01
+    environment:
+      DEPMAP_HOST: nfs01
+      DEPMAP_IP: 10.1.4.10
+      DEPMAP_CLOCK_SPEED: "${DEPMAP_CLOCK_SPEED:-1440}"
+    networks:
+      olddc:
+        ipv4_address: 10.1.4.10
+
+  smtp01:
+    <<: *server
+    hostname: smtp01
+    environment:
+      DEPMAP_HOST: smtp01
+      DEPMAP_IP: 10.1.4.20
+      DEPMAP_CLOCK_SPEED: "${DEPMAP_CLOCK_SPEED:-1440}"
+    networks:
+      olddc:
+        ipv4_address: 10.1.4.20
+
+  vip-portal:
+    <<: *server
+    hostname: vip-portal
+    environment:
+      DEPMAP_HOST: vip-portal
+      DEPMAP_IP: 10.1.1.20
+      DEPMAP_CLOCK_SPEED: "${DEPMAP_CLOCK_SPEED:-1440}"
+      DEPMAP_SNAPSHOT: "0"
+    networks:
+      olddc:
+        ipv4_address: 10.1.1.20
+
+  vip-oracle:
+    <<: *server
+    hostname: vip-oracle
+    environment:
+      DEPMAP_HOST: vip-oracle
+      DEPMAP_IP: 10.1.2.10
+      DEPMAP_CLOCK_SPEED: "${DEPMAP_CLOCK_SPEED:-1440}"
+      DEPMAP_SNAPSHOT: "0"
+    networks:
+      olddc:
+        ipv4_address: 10.1.2.10
+
+  unknown-10-1-7-22:
+    <<: *server
+    hostname: unknown-10-1-7-22
+    environment:
+      DEPMAP_HOST: unknown-10-1-7-22
+      DEPMAP_IP: 10.1.7.22
+      DEPMAP_CLOCK_SPEED: "${DEPMAP_CLOCK_SPEED:-1440}"
+      DEPMAP_SNAPSHOT: "0"
+    networks:
+      olddc:
+        ipv4_address: 10.1.7.22
+
+  partner-ftp:
+    <<: *server
+    hostname: partner-ftp
+    environment:
+      DEPMAP_HOST: partner-ftp
+      DEPMAP_IP: 10.1.9.21
+      DEPMAP_CLOCK_SPEED: "${DEPMAP_CLOCK_SPEED:-1440}"
+      DEPMAP_SNAPSHOT: "0"
+      DEPMAP_EXTRA_IPS: "198.51.100.21"
+    cap_add: [NET_ADMIN]
+    networks:
+      olddc:
+        ipv4_address: 10.1.9.21
+
+  bank-api:
+    <<: *server
+    hostname: bank-api
+    environment:
+      DEPMAP_HOST: bank-api
+      DEPMAP_IP: 10.1.9.43
+      DEPMAP_CLOCK_SPEED: "${DEPMAP_CLOCK_SPEED:-1440}"
+      DEPMAP_SNAPSHOT: "0"
+      DEPMAP_EXTRA_IPS: "198.51.100.43"
+    cap_add: [NET_ADMIN]
+    networks:
+      olddc:
+        ipv4_address: 10.1.9.43
+
+  node-exporter:
+    image: docker.io/prom/node-exporter:v1.9.1
+    command:
+      - --collector.disable-defaults
+      - --collector.textfile
+      - --collector.textfile.directory=/textfile
+    volumes:
+      - textfile:/textfile:ro
+    networks: [mgmt]
+
+  backfill:
+    image: docker.io/prom/prometheus:v3.5.0
+    entrypoint: ["/bin/sh", "/dev-depmap/backfill.sh"]
+    environment:
+      DEPMAP_BACKFILL_DAYS: "${DEPMAP_BACKFILL_DAYS:-30}"
+    volumes:
+      - ./backfill.sh:/dev-depmap/backfill.sh:ro,z
+      - ./estate/flows.tsv:/estate/flows.tsv:ro,z
+      - prometheus:/prometheus
+    networks: [mgmt]
+    restart: "no"
+
+  prometheus:
+    image: docker.io/prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=40d
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-18187}:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro,z
+      - prometheus:/prometheus
+    depends_on:
+      backfill:
+        condition: service_completed_successfully
+      node-exporter:
+        condition: service_started
+    networks: [mgmt]
+
+  perses:
+    image: docker.io/persesdev/perses:v0.55.1
+    command: ["--config", "/etc/perses/config.yaml"]
+    ports:
+      - "127.0.0.1:${PERSES_PORT:-18087}:8080"
+    volumes:
+      - ./perses.yaml:/etc/perses/config.yaml:ro,z
+      - ./provisioning:/etc/perses/provisioning:ro,z
+      - ./dashboards:/etc/perses/dashboards:ro,z
+      # Holds DepMap-<version>.tar.gz from `percli plugin build` (see the README).
+      - ./archive:/etc/perses/plugins-archive-depmap:ro,z
+    depends_on: [prometheus]
+    networks: [mgmt]
+
+networks:
+  # The old data centre. Internal: nothing in it reaches the internet; the "external" endpoints are
+  # containers too.
+  olddc:
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.1.0.0/16
+  mgmt: {}
+
+volumes:
+  textfile: {}
+  prometheus: {}
