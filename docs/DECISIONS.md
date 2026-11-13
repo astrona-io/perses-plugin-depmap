@@ -268,3 +268,40 @@ flow across nodes; the node and the VM for SNATed traffic). Summing doubled them
 full label set keeps one count per distinct flow description; stitching then removes the remaining
 duplicates. Custom `queries.edge` from 0.1 keep working.
 
+## 23. Estate view first, lanes kept
+
+The lanes view answers migration questions (waves, firewall rules, What if) but not "where does this
+run and what is around it" in a mostly-Kubernetes estate with storage, load balancers and the
+internet. The estate view is a drill-down (estate, cluster, machine, namespace, workload) plus a page
+per place and a dependency view. It is the map's default; lanes, What if and Needs are unchanged and
+one click away. The mapped servers (VMs, bare metal) are a place in the estate with a button to the
+lanes view, which is where their waves and firewall rules live.
+
+## 24. Places are matched by address, in a fixed order
+
+An address that is not a mapped instance or a pod is put in a place: load balancer, then storage, then
+"clients" (it only ever calls, never is called), then LAN, then internet provider; what is left is
+"other private" or "other internet" by RFC 1918 and friends. Load balancers and storage first, because
+they usually sit inside a LAN range; clients before LANs, because a phone on the home LAN calling in is
+a client, not a server on the LAN. The order is not configurable: one rule, written down, beats an
+option nobody sets.
+
+## 25. Rates over the window, split over instance pairs
+
+Bytes are averaged over the window and shown per second (configurable), instead of per day: a day is
+the wrong unit for a 6-hour dashboard. Where an edge joins several instance pairs (a workload on three
+nodes calling a VIP), its rate is split evenly over them for the machine-level lines. That is an
+estimate; the true split is not in the metric, and the side panel says so.
+
+## 26. Unmeasured links are dashed, never invented
+
+A load balancer appliance runs no collector, so its forwarding to the cluster is not in any flow.
+`forwardsTo` in the mapping draws it dashed and labelled "not measured", without a rate. A flow that
+confirms it turns the line solid.
+
+## 27. Navigation state lives in the panel
+
+Drill-down position, hops, expanded rows and Hide monitoring are React state in the panel, not URL
+parameters or dashboard variables: Perses has no API for a panel to own query parameters, and writing
+variables from a panel would change every other panel on the dashboard.
+

@@ -57,10 +57,17 @@ export function DependencyMapChartComponent(
             {
               volume: data.results.volume,
               loads: data.results.loads,
+              clusterName: o.clusterName,
             },
           )
         : undefined,
-    [data.results, parsed.mapping, o.thresholds, data.windowHours],
+    [
+      data.results,
+      parsed.mapping,
+      o.thresholds,
+      data.windowHours,
+      o.clusterName,
+    ],
   );
 
   const palette: Palette = useMemo(
@@ -108,6 +115,7 @@ export function DependencyMapChartComponent(
         <DependencyMapView
           model={model}
           o={o}
+          mapping={parsed.mapping}
           mappingText={o.mapping}
           mappingErrors={parsed.errors}
           palette={palette}

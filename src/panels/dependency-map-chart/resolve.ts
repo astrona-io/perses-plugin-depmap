@@ -111,6 +111,7 @@ function addNode(
 export function buildInventory(
   mapping: Mapping,
   samples: EdgeSample[],
+  unnamed: string = UNNAMED_CLUSTER,
 ): Inventory {
   const k = mapping.kubernetes;
   const inv: Inventory = {
@@ -130,7 +131,8 @@ export function buildInventory(
         [s.srcK8s?.cluster, s.dstK8s?.cluster].filter((c): c is string => !!c),
       ),
     );
-    inv.defaultCluster = named.size === 1 ? [...named][0]! : UNNAMED_CLUSTER;
+    inv.defaultCluster =
+      named.size === 1 ? [...named][0]! : unnamed || UNNAMED_CLUSTER;
   }
   for (const c of k?.clusters ?? [])
     for (const n of c.nodes) {

@@ -18,6 +18,12 @@
     "edgeFilter": ["constantly", "hourly", "daily", "weekly", "monthly"],
     "linkTemplates": { "node": "/projects/infra/dashboards/host?var-host=${host}" },
     "scenarios": [{ "name": "LDAP split", "down": ["ldap01", "ldap02"] }],
-    "defaultMode": "map"
+    "defaultMode": "map",
+    "defaultView": "estate",
+    "rateUnit": "s",
+    "clusterLabel": "k8s_cluster_name",
+    "clusterName": "kubernetes",
+    "internetTopAddresses": 40,
+    "monitoringPattern": "prometheus|grafana|otel"
   }
 }

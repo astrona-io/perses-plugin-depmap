@@ -6,6 +6,27 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-13
+
+### Added
+
+- Estate view, the map's new default: estate, cluster, machine (namespaces and workloads), place pages
+  and a dependency view with one to three hops, blast radius and "only path to". Navigation,
+  breadcrumbs and search live in the panel. The lanes view stays one click away (**Estate | Lanes**).
+- `places` in the mapping: load balancers (with `forwardsTo`, drawn dashed as "not measured" until a
+  flow confirms it), storage (with a `ceph` preset), LANs and internet providers. Built-in, editable
+  ranges for common providers.
+- Options `defaultView`, `rateUnit`, `clusterLabel`, `clusterName`, `internetTopAddresses` and
+  `monitoringPattern`, all in the panel editor; **Hide monitoring** in the estate view.
+- A rate unit selector (per second, minute, hour, automatic) in the toolbar.
+
+### Changed
+
+- Rates are averages over the window, per second by default, instead of bytes per day.
+- `window` defaults to the dashboard's time range instead of 30 days.
+- Clusters are grouped by a configurable label; series without it fall into one cluster named by
+  `clusterName`.
+
 ## [0.2.0] - 2026-11-13
 
 ### Added
@@ -62,6 +83,7 @@ All notable changes to this project are documented here. The format follows
 - A `dev/` stack: a fake legacy estate of twenty containers on an accelerated clock, 30 days of
   backfilled history, Prometheus and Perses with a ready dashboard.
 
-[Unreleased]: https://github.com/astrona-io/perses-plugin-depmap/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/astrona-io/perses-plugin-depmap/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/astrona-io/perses-plugin-depmap/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/astrona-io/perses-plugin-depmap/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/astrona-io/perses-plugin-depmap/releases/tag/v0.1.0

@@ -64,7 +64,7 @@ export interface DepmapData {
 
 /**
  * Runs the edge queries as range queries over the window (one-hour steps, ending at the dashboard's end
- * time) and each service's `loadQuery` as an instant query. Variables are expanded in every query.
+ * time; the dashboard's time range unless the panel sets a window) and each service's `loadQuery` as an instant query. Variables are expanded in every query.
  */
 export function useDepmapData(
   spec: DependencyMapChartOptions,
@@ -82,9 +82,12 @@ export function useDepmapData(
     s ? replaceVariablesInString(s, variables).trim() : "";
 
   const end = Math.floor(absoluteTimeRange.end.getTime() / 1000);
+  const rangeSeconds =
+    end - Math.floor(absoluteTimeRange.start.getTime() / 1000);
+  // The dashboard's time range unless the panel sets its own window.
   const windowSeconds = Math.min(
     MAX_WINDOW_SECONDS,
-    Math.max(STEP_SECONDS, parseDuration(expand(o.window)) ?? 30 * 86400),
+    Math.max(STEP_SECONDS, parseDuration(expand(o.window)) ?? rangeSeconds),
   );
   const windowHours = Math.round(windowSeconds / STEP_SECONDS);
   const edgeQuery = expand(o.queries.edge);
@@ -106,6 +109,7 @@ export function useDepmapData(
       loadQueries,
       windowSeconds,
       endBucket,
+      o.clusterLabel,
     ],
     enabled: client.isSuccess,
     keepPreviousData: true,
@@ -151,11 +155,11 @@ export function useDepmapData(
         const v = loadValues[i];
         if (v !== undefined) loads[id] = v;
       });
-      const obiSamples = seriesToSamples(obi, true);
-      const fallbackSamples = seriesToSamples(fallback, false);
+      const obiSamples = seriesToSamples(obi, true, o.clusterLabel);
+      const fallbackSamples = seriesToSamples(fallback, false, o.clusterLabel);
       return {
         samples: [...obiSamples, ...fallbackSamples],
-        volume: seriesToSamples(volume, true),
+        volume: seriesToSamples(volume, true, o.clusterLabel),
         loads,
         sources: {
           obi: obiSamples.length > 0,

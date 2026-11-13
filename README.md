@@ -20,6 +20,17 @@ The data comes from Prometheus, through the upstream Prometheus datasource: netw
 run (on servers, on container hosts and as a DaemonSet on Kubernetes nodes), and a small snapshot
 script everywhere else. The kit for all of them is in [collect/](collect/).
 
+![Dark theme, estate view: a load balancer, the cluster and the mapped servers, storage, the data centre LAN and the internet, joined by measured flows](docs/images/estate-dark.jpg)
+
+| Cluster: control plane, workers, cluster network | Storage place page (Ceph) | Dependencies of a workload |
+| --- | --- | --- |
+| ![Dark theme, a cluster's machines and the places around it](docs/images/cluster-dark.jpg) | ![Dark theme, the Ceph page: clients by role and host](docs/images/storage-dark.jpg) | ![Dark theme, a workload's callers and dependencies with its blast radius](docs/images/deps-dark.jpg) |
+| ![Light theme, a cluster's machines](docs/images/cluster-light.jpg) | ![Light theme, the Ceph page](docs/images/storage-light.jpg) | ![Light theme, a workload's dependencies](docs/images/deps-light.jpg) |
+
+![Light theme, estate view](docs/images/estate-light.jpg)
+
+The lanes view, for migration waves:
+
 ![Dark theme, map mode: waves 1 to 3, what stays and what is outside in columns; hard-wired edges dotted; an unknown address flagged; firewall rules for wave 1 in the side panel](docs/images/map-dark.jpg)
 
 ![Dark theme, what-if mode with ldap01 and ldap02 down: ldap has lost its quorum, portal is hard-wired to ldap01 and breaks, everything in front of it breaks through it](docs/images/what-if-dark.jpg)
@@ -44,9 +55,33 @@ v1.0.0.
 
 ## What it does
 
-The panel has three modes, picked in its toolbar.
+The panel has three modes, picked in its toolbar. Map opens in one of two views, **Estate** or
+**Lanes**.
 
-**Map.** Services from your mapping in columns: one per migration wave (moving to new VMs), then what
+**Map, Estate.** A drill-down from the whole estate to a single workload, with navigation inside the
+panel:
+
+- **Estate:** callers outside (clients), load balancers, one block per Kubernetes cluster (grouped by
+  the cluster label, `k8s_cluster_name` by default) and the mapped servers, then storage, LANs, other
+  private addresses and the internet. Lines are measured flows, thicker for higher rates. A load
+  balancer's `forwardsTo` that no flow confirms is drawn dashed and labelled "not measured".
+- **Cluster:** the internet providers its pods and nodes call (top five, then "+N more"), the
+  machines in control plane and workers, the cluster network (Service addresses, pods whose node is not
+  known), and everything outside the cluster, other clusters included.
+- **Machine:** one card per namespace with its workloads as fixed-width chips (eight, then "+N more").
+  A blue outline marks a workload that talks to another machine.
+- **Place pages:** a load balancer, storage (by role and by host for Ceph), a LAN, an internet
+  provider (the busiest addresses by name, the rest counted), the mapped servers (with a button to the
+  lanes view).
+- **Dependencies:** what calls a workload and what it calls, one to three hops (or + on a row), its
+  blast radius, and the outside systems for which it is the only path.
+
+Breadcrumbs go back up; the search box finds any workload, machine or place. **Hide monitoring**
+hides flows of namespaces and workloads matching `monitoringPattern`. Long names are cut with an
+ellipsis and shown whole in a tooltip. An edge's rate is split evenly over the instance pairs it
+joins when it is drawn between machines.
+
+**Map, Lanes.** Services from your mapping in columns: one per migration wave (moving to new VMs), then what
 stays in the old data centre, then what is outside (externals and unknown IPs). Each node shows its
 name, owner, HA type and instances. Edges point from caller to callee:
 
@@ -56,8 +91,9 @@ name, owner, HA type and instances. Edges point from caller to callee:
 | dashed | weekly or monthly (rare) |
 | dotted, warning colour | hard-wired: the caller only ever connected to one member of an HA service |
 
-Hover an edge for its port, frequency (seen in how many of the window's hours), bytes per day (OBI)
-and last seen. Click a service or edge for details in the side panel. Checkboxes in the toolbar hide
+Hover an edge for its port, frequency (seen in how many of the window's hours), average rate (OBI)
+and last seen. Rates are averaged over the window and shown per second by default; the toolbar switches
+between per second, minute, hour and automatic. Click a service or edge for details in the side panel. Checkboxes in the toolbar hide
 frequency classes (constantly, hourly, daily, weekly, monthly / rare), and the panel says how many
 edges are hidden.
 
@@ -110,7 +146,8 @@ in [docs/metrics.md](docs/metrics.md).
 | OBI network flows | `obi_network_flow_bytes_total` with `src_address`, `dst_address`, `server_port`, and on Kubernetes nodes the `k8s_*` labels | Linux with kernel 5.8+ (or RHEL 4.18+ with eBPF backports) and BTF, run as root: on the server, in a privileged container, or as a DaemonSet |
 | Snapshot script | `depmap_connection_seen` with `src_host`, `src_ip`, `src_process`, `dst_ip`, `dst_port`, `direction` | Any Linux with `ss`, or Windows with PowerShell 5+, through the node_exporter / windows_exporter textfile collector |
 
-The panel runs range queries with a one-hour step over its window (30 days by default). An edge's
+The panel runs range queries with a one-hour step over its window (the dashboard's time range unless
+`window` is set). An edge's
 frequency class is the share of those hours it was seen in. Prometheus must keep at least the window:
 `--storage.tsdb.retention.time=35d`.
 
@@ -170,6 +207,32 @@ kubernetes:
 Pods of workloads the mapping does not name still appear, one node per workload, named after it and
 grouped with its namespace.
 
+An optional `places` section names the addresses that are neither servers nor pods, for the estate
+view. Each place has a `name`, a `match` list (IPs or CIDRs) and an optional `note`; an address
+belongs to the first place that matches, in the order below.
+
+```yaml
+places:
+  loadBalancers:
+    - name: edge-lb
+      match: [10.0.9.10]
+      forwardsTo: [example-cluster]  # clusters or places; dashed until a flow confirms it
+  storage:
+    - name: ceph
+      preset: ceph                   # splits clients by role (mon :6789/:3300, OSD/mgr :6800-7300)
+      match: [10.0.5.0/24]
+  lan:
+    - name: data centre
+      match: [10.0.0.0/16]
+  internet:                          # optional: built-in ranges for GitHub, Cloudflare, Google,
+    - name: GitHub                   # Fastly and Quad9 apply without it; [] turns them off
+      match: [140.82.112.0/20]
+```
+
+The panel editor copies the built-in providers as YAML (**Copy default providers**), to edit them
+here. Other private addresses are "Other private addresses"; other public ones "Other internet
+addresses"; outside callers that are never called are "Clients".
+
 ## Options
 
 | Option | Default | |
@@ -179,7 +242,7 @@ grouped with its namespace.
 | `queries.fallback` | snapshot script query | Empty turns it off |
 | `queries.volume` | none | Bytes per hour per edge from another source |
 | `mapping` | `services: []` | The mapping, YAML or JSON |
-| `window` | `30d` | Observation window, ending at the dashboard's end time |
+| `window` | dashboard time range | Observation window, ending at the dashboard's end time, e.g. `30d`. Rates and frequencies are computed over it |
 | `frequencyThresholds` | `constantly: 0.9`, `hourly: 0.2`, `daily: 0.02`, `weekly: 0.004` | Minimum share of the window's hours per class; less than `weekly` is monthly / rare |
 | `lanes.waveLabels` | `Wave 1`, `Wave 2`, … | Label per wave number, e.g. `{"1": "Wave 1 (March)"}` |
 | `lanes.stayLabel` | `Stays in old DC` | |
@@ -190,6 +253,12 @@ grouped with its namespace.
 | `linkTemplates.edge` | none | Link in an edge's details. `${source}`, `${target}`, `${port}` |
 | `scenarios` | none | Presets: `[{name: "LDAP split", down: [ldap01, ldap02]}]`. Without any, the worst single servers are offered |
 | `defaultMode` | `map` | `map`, `failure` (What if) or `needs` |
+| `defaultView` | `estate` | View the map opens in: `estate` or `lanes` |
+| `rateUnit` | `s` | Rates per `s`, `min`, `h` or `auto`; the toolbar changes it |
+| `clusterLabel` | `k8s_cluster_name` | Label with the Kubernetes cluster name, one block per value. Keep it in `queries.edge` |
+| `clusterName` | `kubernetes` | Cluster name when no series carries the label |
+| `internetTopAddresses` | `40` | Addresses listed by name on an internet provider's page; the rest are counted |
+| `monitoringPattern` | common monitoring stacks | Regular expression over namespace and workload names for **Hide monitoring**; empty removes the switch |
 
 Every option is in the panel editor. Variables (`$var`) are expanded in the queries.
 
@@ -290,8 +359,8 @@ podman container cannot, even on a kernel with BTF (details in
 
 ```bash
 npm ci
-percli plugin build                    # writes DepMap-0.2.0.tar.gz
-cp DepMap-0.2.0.tar.gz dev/archive/
+percli plugin build                    # writes DepMap-0.3.0.tar.gz
+cp DepMap-0.3.0.tar.gz dev/archive/
 cd dev
 podman compose up -d --build           # or docker compose
 ```
@@ -342,16 +411,16 @@ Download `DepMap-<version>.tar.gz` from the
 Perses can read, and add that directory to the config:
 
 ```bash
-curl -fLO https://github.com/astrona-io/perses-plugin-depmap/releases/download/v0.2.0/DepMap-0.2.0.tar.gz
-curl -fLO https://github.com/astrona-io/perses-plugin-depmap/releases/download/v0.2.0/DepMap-0.2.0.tar.gz.sha256
-sha256sum -c DepMap-0.2.0.tar.gz.sha256
+curl -fLO https://github.com/astrona-io/perses-plugin-depmap/releases/download/v0.3.0/DepMap-0.3.0.tar.gz
+curl -fLO https://github.com/astrona-io/perses-plugin-depmap/releases/download/v0.3.0/DepMap-0.3.0.tar.gz.sha256
+sha256sum -c DepMap-0.3.0.tar.gz.sha256
 ```
 
 ```yaml
 plugin:
   archive_paths:
     - /etc/perses/plugins-archive # plugins bundled with Perses
-    - /etc/perses/plugins-archive-depmap # put DepMap-0.2.0.tar.gz here
+    - /etc/perses/plugins-archive-depmap # put DepMap-0.3.0.tar.gz here
 ```
 
 ### Option B: Kubernetes image volume
@@ -367,7 +436,7 @@ linux/amd64 and linux/arm64. Mount it into the Perses pod as an
 volumes:
   - name: depmap-plugin
     image:
-      reference: ghcr.io/astrona-io/perses-plugin-depmap:v0.2.0
+      reference: ghcr.io/astrona-io/perses-plugin-depmap:v0.3.0
       pullPolicy: IfNotPresent
 containers:
   - name: perses
@@ -390,7 +459,7 @@ Copy the archive into the directory of bundled plugins. No config change is need
 
 ```dockerfile
 FROM persesdev/perses:v0.55.1
-COPY DepMap-0.2.0.tar.gz /etc/perses/plugins-archive/
+COPY DepMap-0.3.0.tar.gz /etc/perses/plugins-archive/
 ```
 
 ## Development

@@ -1,4 +1,4 @@
-import { Frequency } from "./dependency-map-chart-types";
+import { Frequency, RateUnit } from "./dependency-map-chart-types";
 
 function trim(n: number, digits: number): string {
   const s = n.toFixed(digits);
@@ -15,6 +15,45 @@ export function formatBytes(v: number | undefined): string {
     i++;
   }
   return `${trim(n, n >= 100 ? 0 : 1)} ${units[i]}`;
+}
+
+const PER: Record<Exclude<RateUnit, "auto">, number> = {
+  s: 1,
+  min: 60,
+  h: 3600,
+};
+
+/**
+ * A rate in bytes per second, shown per second, minute or hour. `auto` picks the largest unit in which
+ * the value is at least 1 kB, so small flows do not read as "0 B/s".
+ */
+export function formatRate(
+  bytesPerSecond: number | undefined,
+  unit: RateUnit = "s",
+): string {
+  if (bytesPerSecond === undefined || !Number.isFinite(bytesPerSecond))
+    return "–";
+  const per =
+    unit !== "auto"
+      ? unit
+      : bytesPerSecond >= 1e3
+        ? "s"
+        : bytesPerSecond * 60 >= 1e3
+          ? "min"
+          : "h";
+  if (bytesPerSecond <= 0) return `0 B/${per}`;
+  let v = bytesPerSecond * PER[per];
+  const units = ["B", "kB", "MB", "GB", "TB"];
+  let i = 0;
+  while (v >= 1e3 && i < units.length - 1) {
+    v /= 1e3;
+    i++;
+  }
+  const shown =
+    v >= 100
+      ? Math.round(v)
+      : Number(v.toPrecision(v < 1 ? 1 : v < 10 ? 2 : 3));
+  return `${shown} ${units[i]}/${per}`;
 }
 
 export function formatAgo(unixSeconds: number, nowSeconds: number): string {

@@ -99,11 +99,43 @@ export interface MappingKubernetes {
   services: MappingWorkload[];
 }
 
+/** A group of addresses shown as one place on the estate map: a load balancer, storage, a LAN, a provider. */
+export interface MappingPlace {
+  name: string;
+  /** IP addresses and CIDRs in the place. */
+  match: string[];
+  /** Free text shown under the name, e.g. "HAProxy + keepalived". */
+  note?: string;
+  /** Storage only: `ceph` names Ceph's port roles (mon on 3300 and 6789, OSD / mgr on 6800-7300). */
+  preset?: "ceph";
+  /**
+   * Load balancers only: clusters (by name) or places it forwards to. When no flow from it to one of
+   * them is measured (its host runs no collector), the link is drawn dashed as "not measured".
+   */
+  forwardsTo?: string[];
+}
+
+export type PlaceGroup = "loadBalancers" | "storage" | "lan" | "internet";
+export const PLACE_GROUPS: PlaceGroup[] = [
+  "loadBalancers",
+  "storage",
+  "lan",
+  "internet",
+];
+
+/**
+ * Places for the estate view. `internet` lists providers by their published ranges; when it is left
+ * out, well-known public ranges are used (see places.ts), and `internet: []` turns them off.
+ */
+export type MappingPlaces = Partial<Record<PlaceGroup, MappingPlace[]>>;
+
 export interface Mapping {
   services: MappingService[];
   external: MappingExternal[];
   /** Optional; absent in mappings written for v0.1. */
   kubernetes?: MappingKubernetes;
+  /** Optional; absent in mappings written before v0.3. */
+  places?: MappingPlaces;
 }
 
 export interface MappingResult {
@@ -194,7 +226,12 @@ export function parseMapping(text: string): MappingResult {
   if (!isObject(raw))
     return { mapping: empty, errors: ["mapping: must be an object"] };
   for (const k of Object.keys(raw))
-    if (k !== "services" && k !== "external" && k !== "kubernetes")
+    if (
+      k !== "services" &&
+      k !== "external" &&
+      k !== "kubernetes" &&
+      k !== "places"
+    )
       errors.push(`mapping: unknown key "${k}"`);
 
   const services: MappingService[] = [];
@@ -353,7 +390,80 @@ export function parseMapping(text: string): MappingResult {
     const k = parseKubernetes(raw.kubernetes, ids, ips, errors);
     if (k) mapping.kubernetes = k;
   }
+  if (raw.places !== undefined) {
+    const pl = parsePlaces(raw.places, errors);
+    if (pl) mapping.places = pl;
+  }
   return { mapping, errors };
+}
+
+const PLACE_KEYS = new Set(["name", "match", "note", "preset", "forwardsTo"]);
+
+function parsePlaces(
+  raw: unknown,
+  errors: string[],
+): MappingPlaces | undefined {
+  if (!isObject(raw)) {
+    errors.push("places: must be an object");
+    return undefined;
+  }
+  const out: MappingPlaces = {};
+  for (const k of Object.keys(raw))
+    if (!PLACE_GROUPS.includes(k as PlaceGroup))
+      errors.push(`places: unknown key "${k}"`);
+  for (const g of PLACE_GROUPS) {
+    const list = raw[g];
+    if (list === undefined) continue;
+    if (!Array.isArray(list)) {
+      errors.push(`places.${g}: must be a list`);
+      continue;
+    }
+    const places: MappingPlace[] = [];
+    list.forEach((x: unknown, i: number) => {
+      const p = `places.${g}[${i}]`;
+      if (!isObject(x)) {
+        errors.push(`${p}: must be an object`);
+        return;
+      }
+      for (const k of Object.keys(x))
+        if (!PLACE_KEYS.has(k)) errors.push(`${p}: unknown key "${k}"`);
+      if (typeof x.name !== "string" || !x.name.trim()) {
+        errors.push(`${p}.name: required string`);
+        return;
+      }
+      const match = stringList(
+        x.match,
+        `${p}.match`,
+        errors,
+        (s) => isIp(s) || isCidr(s),
+        "IP addresses or CIDRs",
+      );
+      if (!match) {
+        if (x.match === undefined) errors.push(`${p}.match: required list`);
+        return;
+      }
+      const place: MappingPlace = { name: x.name, match };
+      if (x.note !== undefined) {
+        if (typeof x.note !== "string")
+          errors.push(`${p}.note: must be a string`);
+        else place.note = x.note;
+      }
+      if (x.preset !== undefined) {
+        if (g !== "storage" || x.preset !== "ceph")
+          errors.push(`${p}.preset: only "ceph", on storage`);
+        else place.preset = "ceph";
+      }
+      if (x.forwardsTo !== undefined) {
+        const to = stringList(x.forwardsTo, `${p}.forwardsTo`, errors);
+        if (to && g !== "loadBalancers")
+          errors.push(`${p}.forwardsTo: only on loadBalancers`);
+        else if (to) place.forwardsTo = to;
+      }
+      places.push(place);
+    });
+    out[g] = places;
+  }
+  return out;
 }
 
 function stringList(

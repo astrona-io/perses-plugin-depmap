@@ -1,6 +1,6 @@
-import { Mode } from "./dependency-map-chart-types";
+import { Mode, RateUnit } from "./dependency-map-chart-types";
 import { FailureResult, ServiceState } from "./failure";
-import { FREQUENCY_LABELS, escapeHtml, formatAgo, formatBytes } from "./format";
+import { FREQUENCY_LABELS, escapeHtml, formatAgo, formatRate } from "./format";
 import { CHIP_H, CHIP_W, Layout } from "./layout";
 import { DepEdge, DepModel, ServiceNode } from "./model";
 
@@ -45,6 +45,7 @@ export interface OptionInput {
   palette: Palette;
   box: SeriesBox;
   nowSeconds: number;
+  rateUnit?: RateUnit;
 }
 
 export const STATE_LABELS: Record<ServiceState, string> = {
@@ -104,8 +105,8 @@ function clamp(v: number, lo: number, hi: number): number {
 }
 
 function edgeWidth(e: DepEdge): number {
-  if (e.bytesPerDay !== undefined && e.bytesPerDay > 0)
-    return clamp(1 + Math.log10(1 + e.bytesPerDay / 1e5), 1, 6);
+  if (e.bytesPerSecond !== undefined && e.bytesPerSecond > 0)
+    return clamp(1 + Math.log10(1 + (e.bytesPerSecond * 86400) / 1e5), 1, 6);
   return { constantly: 2.6, hourly: 2, daily: 1.6, weekly: 1.3, monthly: 1.2 }[
     e.frequency
   ];
@@ -169,6 +170,7 @@ export function edgeTooltip(
   e: DepEdge,
   model: DepModel,
   nowSeconds: number,
+  rateUnit: RateUnit = "s",
 ): string {
   const a = model.byId.get(e.source)?.name ?? e.source;
   const b = model.byId.get(e.target)?.name ?? e.target;
@@ -179,8 +181,8 @@ export function edgeTooltip(
     ).toFixed(e.share < 0.01 ? 2 : 1)}%)`,
     `Last seen ${formatAgo(e.lastSeen, nowSeconds)}`,
   ];
-  if (e.bytesPerDay !== undefined)
-    rows.push(`${formatBytes(e.bytesPerDay)} per day`);
+  if (e.bytesPerSecond !== undefined)
+    rows.push(`${formatRate(e.bytesPerSecond, rateUnit)} on average`);
   if (e.processes.length)
     rows.push(`Process: ${escapeHtml(e.processes.join(", "))}`);
   if (e.crosses?.length)
@@ -479,7 +481,7 @@ export function buildOption(input: OptionInput): object {
         textBorderWidth: 2,
       },
       raw: { id: e.id },
-      tooltipHtml: edgeTooltip(e, model, input.nowSeconds),
+      tooltipHtml: edgeTooltip(e, model, input.nowSeconds, input.rateUnit),
     });
   }
 
