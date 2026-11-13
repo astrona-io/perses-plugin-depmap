@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/astrona-io/perses-plugin-depmap/collect/mapping.schema.json",
   "title": "Dependency map mapping",
-  "description": "Services, instances, owners, migration waves, HA groups and external endpoints for the Dependency map panel.",
+  "description": "Services, instances, owners, migration waves, HA groups, external endpoints and Kubernetes workloads for the Dependency map panel.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -13,6 +13,9 @@
     "external": {
       "type": "array",
       "items": { "$ref": "#/$defs/external" }
+    },
+    "kubernetes": {
+      "$ref": "#/$defs/kubernetes"
     }
   },
   "$defs": {
@@ -33,7 +36,10 @@
         "minUp": { "type": "integer", "minimum": 1, "description": "active-active: instances that must be up. Default 1." },
         "load": { "type": "number", "minimum": 0, "description": "Load as % of the capacity of all instances together." },
         "loadQuery": { "type": "string", "description": "PromQL returning the load as % of the capacity of all instances." },
-        "vip": { "$ref": "#/$defs/ip", "description": "Virtual IP clients should call. Calls to an instance IP are hard-wired to that instance." },
+        "vip": {
+          "$ref": "#/$defs/ip",
+          "description": "Virtual IP clients should call. Calls to an instance IP are hard-wired to that instance."
+        },
         "process": { "type": "string" },
         "instances": {
           "type": "array",
@@ -58,6 +64,90 @@
         "match": { "type": "string", "minLength": 1, "description": "An IP, a CIDR, or a name reported by the collector." },
         "name": { "type": "string" },
         "owner": { "type": "string" }
+      }
+    },
+    "kubernetes": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional (added in v0.2.0). Clusters and the services made of their pods. Pods are matched by cluster, namespace and workload, never by address.",
+      "required": ["clusters"],
+      "properties": {
+        "clusters": { "type": "array", "items": { "$ref": "#/$defs/cluster" } },
+        "services": { "type": "array", "items": { "$ref": "#/$defs/workload" } }
+      }
+    },
+    "cluster": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "nodes"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "As OBI reports it in k8s_cluster_name (OTEL_EBPF_KUBE_CLUSTER_NAME)."
+        },
+        "nodes": { "type": "array", "items": { "$ref": "#/$defs/node" } },
+        "egressIps": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ip" },
+          "description": "Addresses pod traffic leaves the cluster with, when not the node addresses (egress gateway, NAT)."
+        },
+        "hideNamespaces": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Namespaces left off the map. Default [\"kube-system\"]."
+        }
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "ip"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "description": "Node name as the Kubernetes API reports it." },
+        "ip": {
+          "$ref": "#/$defs/ip",
+          "description": "The address other networks see; the source of SNATed pod traffic, used in firewall rules."
+        },
+        "addresses": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ip" },
+          "description": "Other addresses of the node: recognised, not used in rules."
+        }
+      }
+    },
+    "workload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "namespace"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "description": "Unique id of the service." },
+        "name": { "type": "string", "description": "Shown on the map; defaults to id." },
+        "owner": { "type": "string" },
+        "cluster": { "type": "string", "description": "Required when more than one cluster is listed." },
+        "namespace": { "type": "string", "minLength": 1 },
+        "workload": { "type": "string", "description": "Workload (top owner) name, or a glob with *. Default: the id." },
+        "services": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Kubernetes Service names in front of it. Default: the workload name, when it is not a glob."
+        },
+        "replicas": { "type": "integer", "minimum": 1, "description": "Desired replicas; HA is judged against these." },
+        "ha": {
+          "enum": ["single", "active-active", "active-passive", "quorum"],
+          "default": "single",
+          "description": "Default active-active when replicas > 1, else single."
+        },
+        "minUp": { "type": "integer", "minimum": 1, "description": "active-active: instances that must be up. Default 1." },
+        "nodePorts": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1, "maximum": 65535 },
+          "description": "NodePorts that lead to it."
+        },
+        "loadBalancerIp": { "$ref": "#/$defs/ip" },
+        "load": { "type": "number", "minimum": 0, "description": "Load as % of the capacity of all instances together." },
+        "loadQuery": { "type": "string", "description": "PromQL returning the load as % of the capacity of all instances." },
+        "process": { "type": "string" }
       }
     }
   }

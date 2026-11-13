@@ -1,0 +1,50 @@
+# One OBI per node, on the node's network so it sees every interface: pod veths (pod-side addresses,
+# before SNAT) and the node's uplink (after SNAT/DNAT). Settings as in the OBI network quickstart:
+# hostNetwork with ClusterFirstWithHostNet, privileged, config from a ConfigMap. hostPID lets OBI see
+# the processes behind the sockets on the node.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: obi
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: obi-depmap
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: obi-depmap
+    spec:
+      serviceAccountName: obi
+      hostNetwork: true
+      hostPID: true
+      dnsPolicy: ClusterFirstWithHostNet
+      tolerations:
+        - operator: Exists # every node, control planes included
+      containers:
+        - name: obi
+          image: otel/ebpf-instrument:v1.0.0
+          securityContext:
+            privileged: true
+          env:
+            - name: OTEL_EBPF_CONFIG_PATH
+              value: /config/config.yaml
+            - name: OTEL_EBPF_KUBE_METADATA_ENABLE
+              value: "true"
+            # Shown as k8s_cluster_name. OBI detects it on some managed clusters; set it so it always
+            # matches the cluster name in the depmap mapping.
+            - name: OTEL_EBPF_KUBE_CLUSTER_NAME
+              value: example-cluster
+          ports:
+            - name: metrics
+              containerPort: 9400
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 512Mi }
+          volumeMounts:
+            - name: config
+              mountPath: /config
+      volumes:
+        - name: config
+          configMap:
+            name: obi-depmap-config

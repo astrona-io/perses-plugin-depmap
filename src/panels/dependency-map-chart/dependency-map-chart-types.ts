@@ -94,7 +94,7 @@ export interface DependencyMapChartOptions {
  * name.
  */
 export const DEFAULT_EDGE_QUERY =
-  'sum by (src_address, dst_address, server_port, dst_name) (increase(obi_network_flow_bytes_total{direction="request"}[1h])) > 0';
+  'max by (src_address, dst_address, server_port, dst_name, src_cidr, dst_cidr, k8s_cluster_name, k8s_src_type, k8s_src_namespace, k8s_src_name, k8s_src_owner_name, k8s_src_owner_type, k8s_src_node_name, k8s_src_node_ip, k8s_dst_type, k8s_dst_namespace, k8s_dst_name, k8s_dst_owner_name, k8s_dst_owner_type, k8s_dst_node_name, k8s_dst_node_ip) (increase(obi_network_flow_bytes_total{direction="request"}[1h])) > 0';
 /** The fallback script's connections, seen at least once per hour. */
 export const DEFAULT_FALLBACK_QUERY =
   "max by (src_ip, src_host, src_process, dst_ip, dst_port, direction) (max_over_time(depmap_connection_seen[1h]))";

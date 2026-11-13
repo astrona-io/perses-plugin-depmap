@@ -3,7 +3,7 @@
   "spec": {
     "datasource": { "kind": "PrometheusDatasource" },
     "queries": {
-      "edge": "sum by (src_address, dst_address, server_port, dst_name) (increase(obi_network_flow_bytes_total{direction=\"request\"}[1h])) > 0",
+      "edge": "max by (src_address, dst_address, server_port, dst_name, src_cidr, dst_cidr, k8s_cluster_name, k8s_src_type, k8s_src_namespace, k8s_src_name, k8s_src_owner_name, k8s_src_owner_type, k8s_src_node_name, k8s_src_node_ip, k8s_dst_type, k8s_dst_namespace, k8s_dst_name, k8s_dst_owner_name, k8s_dst_owner_type, k8s_dst_node_name, k8s_dst_node_ip) (increase(obi_network_flow_bytes_total{direction=\"request\"}[1h])) > 0",
       "fallback": "max by (src_ip, src_host, src_process, dst_ip, dst_port, direction) (max_over_time(depmap_connection_seen[1h]))"
     },
     "mapping": "services:\n  - id: portal\n    owner: web team\n    wave: 1\n    ha: active-active\n    minUp: 1\n    load: 65\n    vip: 10.1.1.20\n    instances:\n      - { host: app01, ip: 10.1.1.11 }\n      - { host: app04, ip: 10.1.1.14 }\nexternal:\n  - { match: 198.51.100.43, name: bank-api.example.com, owner: bank }\n",

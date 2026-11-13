@@ -1,0 +1,19 @@
+# OBI as a DaemonSet, network flow metrics only, decorated with Kubernetes metadata.
+#   kubectl apply -k collect/kubernetes/obi
+#   kubectl delete -k collect/kubernetes/obi
+# Set your cluster's name in config.yaml (k8s_cluster_name) and your ranges under network.cidrs.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: depmap
+resources:
+  - namespace.yaml
+  - rbac.yaml
+  - daemonset.yaml
+configMapGenerator:
+  - name: obi-depmap-config
+    files:
+      - config.yaml
+labels:
+  - pairs:
+      app.kubernetes.io/name: obi-depmap
+      app.kubernetes.io/part-of: perses-plugin-depmap

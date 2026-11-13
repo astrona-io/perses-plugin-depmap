@@ -136,3 +136,101 @@ describe("isIp / isCidr", () => {
     expect(isCidr("10.0.0.0")).toBe(false);
   });
 });
+
+describe("parseMapping: kubernetes", () => {
+  const base = (k: string): string => `
+services:
+  - id: db
+    instances:
+      - { host: db01, ip: 10.1.2.11 }
+external: []
+kubernetes:
+${k}`;
+
+  it("parses clusters, nodes and workload services", () => {
+    const r = parseMapping(
+      base(`  clusters:
+    - name: c1
+      egressIps: [10.1.8.100]
+      nodes:
+        - { name: n1, ip: 10.1.8.10, addresses: [10.89.0.15] }
+  services:
+    - id: orders
+      namespace: shop
+      replicas: 3
+      minUp: 2
+      nodePorts: [30080]
+      loadBalancerIp: 10.1.8.200
+`),
+    );
+    expect(r.errors).toEqual([]);
+    expect(r.mapping.kubernetes).toEqual({
+      clusters: [
+        {
+          name: "c1",
+          egressIps: ["10.1.8.100"],
+          nodes: [{ name: "n1", ip: "10.1.8.10", addresses: ["10.89.0.15"] }],
+        },
+      ],
+      services: [
+        expect.objectContaining({
+          id: "orders",
+          namespace: "shop",
+          replicas: 3,
+          minUp: 2,
+          nodePorts: [30080],
+          loadBalancerIp: "10.1.8.200",
+        }),
+      ],
+    });
+  });
+
+  it("a mapping without kubernetes (v0.1) still parses, with no kubernetes section", () => {
+    const r = parseMapping(MAPPING_YAML);
+    expect(r.errors).toEqual([]);
+    expect(r.mapping.kubernetes).toBeUndefined();
+  });
+
+  it.each([
+    [`  clusters: {}\n  services: []`, "kubernetes.clusters: must be a list"],
+    [
+      `  clusters: []\n  services: []\n  extra: 1`,
+      'kubernetes: unknown key "extra"',
+    ],
+    [
+      `  clusters:\n    - name: c1\n      nodes:\n        - { name: n1 }\n  services: []`,
+      "ip: required IP address",
+    ],
+    [
+      `  clusters:\n    - name: c1\n      nodes:\n        - { name: n1, ip: 10.1.2.11 }\n  services: []`,
+      "10.1.2.11 is already used by db",
+    ],
+    [
+      `  clusters: []\n  services:\n    - id: db\n      namespace: x`,
+      "duplicate id",
+    ],
+    [
+      `  clusters: []\n  services:\n    - id: w\n      replicas: 1`,
+      "namespace: required string",
+    ],
+    [
+      `  clusters: []\n  services:\n    - id: w\n      namespace: x\n      replicas: 0`,
+      "replicas: must be an integer >= 1",
+    ],
+    [
+      `  clusters: []\n  services:\n    - id: w\n      namespace: x\n      replicas: 1\n      ha: active-active`,
+      "needs replicas >= 2",
+    ],
+    [
+      `  clusters: []\n  services:\n    - id: w\n      namespace: x\n      nodePorts: [http]`,
+      "nodePorts: must be a list of ports",
+    ],
+    [
+      `  clusters:\n    - name: a\n      nodes: []\n    - name: b\n      nodes: []\n  services:\n    - id: w\n      namespace: x\n      cluster: c`,
+      "is not in kubernetes.clusters",
+    ],
+  ])("rejects %#", (k, message) => {
+    const r = parseMapping(base(k));
+    expect(r.errors.join("\n")).toContain(message);
+  });
+});

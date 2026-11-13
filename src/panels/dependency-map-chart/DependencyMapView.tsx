@@ -20,10 +20,15 @@ import {
 import {
   evaluateFailure,
   hardWiredClients,
+  hopChains,
   loseOneServer,
   needsOf,
 } from "./failure";
-import { firewallRulesForWave, wavesOf } from "./firewall";
+import {
+  firewallRulesForCluster,
+  firewallRulesForWave,
+  wavesOf,
+} from "./firewall";
 import { FREQUENCY_LABELS } from "./format";
 import { buildOption, fitBox, Palette, STATE_LABELS } from "./chart-option";
 import { GraphCanvas } from "./GraphCanvas";
@@ -78,7 +83,7 @@ export function DependencyMapView(props: DependencyMapViewProps): ReactElement {
   );
   const narrow = width < NARROW;
   const [panelOpen, setPanelOpen] = useState(!narrow);
-  const [firewallWave, setFirewallWave] = useState(1);
+  const [firewallScope, setFirewallScope] = useState("1");
 
   useEffect(() => setMode(o.defaultMode), [o.defaultMode]);
   useEffect(() => setShown(new Set(o.edgeFilter)), [o.edgeFilter]);
@@ -148,11 +153,37 @@ export function DependencyMapView(props: DependencyMapViewProps): ReactElement {
     ws.add(max + 1);
     return [...ws].sort((a, b) => a - b);
   }, [model, props.model]);
+  const clusters = useMemo(
+    () =>
+      [
+        ...new Set(model.nodes.flatMap((n) => (n.k8s ? [n.k8s.cluster] : []))),
+      ].sort(),
+    [model],
+  );
+  const chain = useMemo(
+    () =>
+      mode === "map" && selectedNode
+        ? hopChains(view.model, selectedNode)
+        : undefined,
+    [mode, view.model, selectedNode],
+  );
   // Firewall rules use every edge seen in the window, not just the filtered ones.
   const firewall = useMemo(
-    () => firewallRulesForWave(model, firewallWave),
-    [model, firewallWave],
+    () =>
+      firewallScope.startsWith("k8s:")
+        ? firewallRulesForCluster(model, firewallScope.slice(4))
+        : firewallRulesForWave(model, Number(firewallScope)),
+    [model, firewallScope],
   );
+  // With no waves, the first cluster boundary is the useful default.
+  useEffect(() => {
+    if (
+      !firewallScope.startsWith("k8s:") &&
+      clusters.length > 0 &&
+      wavesOf(model).length === 0
+    )
+      setFirewallScope(`k8s:${clusters[0]}`);
+  }, [clusters, model, firewallScope]);
 
   const layout = useMemo(
     () =>
@@ -182,6 +213,7 @@ export function DependencyMapView(props: DependencyMapViewProps): ReactElement {
         selectedNode,
         selectedEdge,
         needs,
+        chain,
         palette,
         box: fitBox(layout, mapW, mapH),
         nowSeconds,
@@ -195,6 +227,7 @@ export function DependencyMapView(props: DependencyMapViewProps): ReactElement {
       selectedNode,
       selectedEdge,
       needs,
+      chain,
       palette,
       mapW,
       mapH,
@@ -415,9 +448,60 @@ export function DependencyMapView(props: DependencyMapViewProps): ReactElement {
         }}
       >
         <Box
-          sx={{ width: mapW, height: mapH, flexShrink: 0 }}
+          sx={{
+            width: mapW,
+            height: mapH,
+            flexShrink: 0,
+            position: "relative",
+          }}
           data-testid="depmap-canvas"
         >
+          {/*
+           * The canvas cannot take keyboard focus per node, so every service is also a button here:
+           * hidden until one of them is focused (Tab into the map), then shown over the map.
+           */}
+          <Box
+            component="nav"
+            aria-label="Services on the map"
+            sx={{
+              position: "absolute",
+              zIndex: 3,
+              left: 4,
+              top: 4,
+              maxWidth: mapW - 8,
+              maxHeight: mapH - 8,
+              overflow: "auto",
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 0.5,
+              p: 0.5,
+              bgcolor: "background.paper",
+              boxShadow: 2,
+              borderRadius: 1,
+              "&:not(:focus-within)": {
+                clip: "rect(0 0 0 0)",
+                clipPath: "inset(50%)",
+                width: 1,
+                height: 1,
+                overflow: "hidden",
+                p: 0,
+                whiteSpace: "nowrap",
+              },
+            }}
+          >
+            {view.model.nodes.map((n) => (
+              <Button
+                key={n.id}
+                size="small"
+                variant={selectedNode === n.id ? "contained" : "outlined"}
+                aria-pressed={selectedNode === n.id}
+                sx={{ textTransform: "none", py: 0 }}
+                onClick={() => onNodeClick(n.id)}
+              >
+                {n.name}
+              </Button>
+            ))}
+          </Box>
           <GraphCanvas
             option={option}
             theme={props.echartsTheme}
@@ -479,8 +563,10 @@ export function DependencyMapView(props: DependencyMapViewProps): ReactElement {
               onCopyMapping={() =>
                 void copyText(updateWaves(props.mappingText, waveOverrides))
               }
-              firewallWave={firewallWave}
-              onFirewallWave={setFirewallWave}
+              firewallScope={firewallScope}
+              onFirewallScope={setFirewallScope}
+              clusters={clusters}
+              chain={chain?.nodes}
               firewall={firewall}
               hiddenEdges={view.hiddenEdges}
               mappingErrors={props.mappingErrors}

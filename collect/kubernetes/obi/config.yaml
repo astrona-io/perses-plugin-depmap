@@ -1,0 +1,56 @@
+# OBI on Kubernetes nodes for the dependency map: network flow metrics only, with Kubernetes metadata.
+# Keys checked against the OBI v1.0.0 docs (opentelemetry.io/docs/zero-code/obi/network/ and
+# .../network/config/). Metric and labels: docs/metrics.md.
+prometheus_export:
+  port: 9400
+  path: /metrics
+
+metrics:
+  features:
+    - network
+
+network:
+  source: socket_filter
+  # Without this OBI leaves server.port empty or 0 (port guessing is off by default since v0.7.0): OBI
+  # guesses client and server port with ordinal heuristics.
+  guess_ports: ordinal
+  # Name the ranges a connection can cross; they become src_cidr / dst_cidr. Put the old data centre,
+  # the pod and service ranges of this cluster, and the node network here.
+  cidrs:
+    - cidr: 10.244.0.0/16
+      name: pods
+    - cidr: 10.96.0.0/16
+      name: services
+    - cidr: 10.0.0.0/8
+      name: private-10
+
+attributes:
+  kubernetes:
+    enable: true
+  select:
+    obi_network_flow_bytes:
+      # attributes.select replaces the defaults, so list everything the panel reads.
+      include:
+        - direction
+        - src.address
+        - dst.address
+        - server.port
+        - dst.name
+        - src.cidr
+        - dst.cidr
+        - obi.ip
+        - k8s.cluster.name
+        - k8s.src.namespace
+        - k8s.src.name
+        - k8s.src.owner.name
+        - k8s.src.owner.type
+        - k8s.src.type
+        - k8s.src.node.name
+        - k8s.src.node.ip
+        - k8s.dst.namespace
+        - k8s.dst.name
+        - k8s.dst.owner.name
+        - k8s.dst.owner.type
+        - k8s.dst.type
+        - k8s.dst.node.name
+        - k8s.dst.node.ip

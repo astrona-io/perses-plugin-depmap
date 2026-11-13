@@ -1,0 +1,13 @@
+# The Kubernetes half of the example estate: one control plane and two workers, so a node can fail
+# while the workload keeps running on the other one. Created by dev/hybrid.sh with the podman (or
+# docker) provider; the cluster name is fixed so teardown never touches another cluster.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: perses-plugin-depmap
+networking:
+  podSubnet: 10.244.0.0/16
+  serviceSubnet: 10.96.0.0/16
+nodes:
+  - role: control-plane
+  - role: worker
+  - role: worker

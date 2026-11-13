@@ -46,9 +46,64 @@ export interface MappingExternal {
   owner?: string;
 }
 
+/** A Kubernetes node: its name as the API reports it and the address the rest of the network sees. */
+export interface MappingNode {
+  name: string;
+  /** The node address other networks see (the source of SNATed pod traffic); used in firewall rules. */
+  ip: string;
+  /** Other addresses of the node (internal IP, other interfaces): recognised, not used in rules. */
+  addresses?: string[];
+}
+
+export interface MappingCluster {
+  /** As OBI reports it in k8s_cluster_name (OTEL_EBPF_KUBE_CLUSTER_NAME). */
+  name: string;
+  nodes: MappingNode[];
+  /** Addresses pod traffic leaves the cluster with, when not the node addresses (egress gateway, NAT). */
+  egressIps?: string[];
+  /** Namespaces left off the map. Default ["kube-system"]. */
+  hideNamespaces?: string[];
+}
+
+/**
+ * A service made of Kubernetes pods. No addresses: pods are matched by cluster, namespace and workload
+ * (the owner OBI reports: Deployment, StatefulSet, DaemonSet, ...), so they can come and go.
+ */
+export interface MappingWorkload {
+  id: string;
+  name?: string;
+  owner?: string;
+  /** Required when the mapping lists more than one cluster. */
+  cluster?: string;
+  namespace: string;
+  /** Workload (owner) name, or a glob with `*`. Default: the id. */
+  workload?: string;
+  /** Kubernetes Service names in front of it. Default: the workload name, when it is not a glob. */
+  services?: string[];
+  /** Desired replicas; HA is judged against this, not against the pods that happened to be seen. */
+  replicas?: number;
+  /** Default active-active when replicas > 1, else single. */
+  ha?: HaType;
+  minUp?: number;
+  /** NodePorts that lead to it: calls to a node address on one of these ports are calls to it. */
+  nodePorts?: number[];
+  /** LoadBalancer address in front of it. */
+  loadBalancerIp?: string;
+  load?: number;
+  loadQuery?: string;
+  process?: string;
+}
+
+export interface MappingKubernetes {
+  clusters: MappingCluster[];
+  services: MappingWorkload[];
+}
+
 export interface Mapping {
   services: MappingService[];
   external: MappingExternal[];
+  /** Optional; absent in mappings written for v0.1. */
+  kubernetes?: MappingKubernetes;
 }
 
 export interface MappingResult {
@@ -88,6 +143,27 @@ const SERVICE_KEYS = new Set([
 ]);
 const INSTANCE_KEYS = new Set(["host", "ip", "role"]);
 const EXTERNAL_KEYS = new Set(["match", "name", "owner"]);
+const KUBERNETES_KEYS = new Set(["clusters", "services"]);
+const CLUSTER_KEYS = new Set(["name", "nodes", "egressIps", "hideNamespaces"]);
+const NODE_KEYS = new Set(["name", "ip", "addresses"]);
+const WORKLOAD_KEYS = new Set([
+  "id",
+  "name",
+  "owner",
+  "cluster",
+  "namespace",
+  "workload",
+  "services",
+  "replicas",
+  "ha",
+  "minUp",
+  "nodePorts",
+  "loadBalancerIp",
+  "load",
+  "loadQuery",
+  "process",
+]);
+export const DEFAULT_HIDDEN_NAMESPACES = ["kube-system"];
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -118,7 +194,7 @@ export function parseMapping(text: string): MappingResult {
   if (!isObject(raw))
     return { mapping: empty, errors: ["mapping: must be an object"] };
   for (const k of Object.keys(raw))
-    if (k !== "services" && k !== "external")
+    if (k !== "services" && k !== "external" && k !== "kubernetes")
       errors.push(`mapping: unknown key "${k}"`);
 
   const services: MappingService[] = [];
@@ -272,7 +348,222 @@ export function parseMapping(text: string): MappingResult {
       external.push(e);
     });
 
-  return { mapping: { services, external }, errors };
+  const mapping: Mapping = { services, external };
+  if (raw.kubernetes !== undefined) {
+    const k = parseKubernetes(raw.kubernetes, ids, ips, errors);
+    if (k) mapping.kubernetes = k;
+  }
+  return { mapping, errors };
+}
+
+function stringList(
+  v: unknown,
+  path: string,
+  errors: string[],
+  check?: (s: string) => boolean,
+  what = "strings",
+): string[] | undefined {
+  if (v === undefined) return undefined;
+  if (
+    !Array.isArray(v) ||
+    v.some((x) => typeof x !== "string" || (check && !check(x)))
+  ) {
+    errors.push(`${path}: must be a list of ${what}`);
+    return undefined;
+  }
+  return v as string[];
+}
+
+function parseKubernetes(
+  raw: unknown,
+  ids: Set<string>,
+  ips: Map<string, string>,
+  errors: string[],
+): MappingKubernetes | undefined {
+  if (!isObject(raw)) {
+    errors.push("kubernetes: must be an object");
+    return undefined;
+  }
+  for (const k of Object.keys(raw))
+    if (!KUBERNETES_KEYS.has(k)) errors.push(`kubernetes: unknown key "${k}"`);
+  const clusters: MappingCluster[] = [];
+  const rawClusters = raw.clusters ?? [];
+  if (!Array.isArray(rawClusters))
+    errors.push("kubernetes.clusters: must be a list");
+  else
+    rawClusters.forEach((c: unknown, i: number) => {
+      const p = `kubernetes.clusters[${i}]`;
+      if (!isObject(c)) {
+        errors.push(`${p}: must be an object`);
+        return;
+      }
+      for (const k of Object.keys(c))
+        if (!CLUSTER_KEYS.has(k)) errors.push(`${p}: unknown key "${k}"`);
+      if (typeof c.name !== "string" || !c.name.trim()) {
+        errors.push(`${p}.name: required string`);
+        return;
+      }
+      const at = `kubernetes.clusters[${c.name}]`;
+      if (clusters.some((x) => x.name === c.name)) {
+        errors.push(`${at}: duplicate name`);
+        return;
+      }
+      const cluster: MappingCluster = { name: c.name, nodes: [] };
+      const rawNodes = c.nodes ?? [];
+      if (!Array.isArray(rawNodes)) errors.push(`${at}.nodes: must be a list`);
+      else
+        rawNodes.forEach((n: unknown, j: number) => {
+          const np = `${at}.nodes[${j}]`;
+          if (!isObject(n)) {
+            errors.push(`${np}: must be an object`);
+            return;
+          }
+          for (const k of Object.keys(n))
+            if (!NODE_KEYS.has(k)) errors.push(`${np}: unknown key "${k}"`);
+          if (typeof n.name !== "string" || !n.name.trim()) {
+            errors.push(`${np}.name: required string`);
+            return;
+          }
+          if (typeof n.ip !== "string" || !isIp(n.ip)) {
+            errors.push(`${np}.ip: required IP address`);
+            return;
+          }
+          const node: MappingNode = { name: n.name, ip: n.ip };
+          const addresses = stringList(
+            n.addresses,
+            `${np}.addresses`,
+            errors,
+            isIp,
+            "IP addresses",
+          );
+          if (addresses) node.addresses = addresses;
+          for (const a of [n.ip, ...(addresses ?? [])]) {
+            const owner = ips.get(a);
+            if (owner) errors.push(`${np}: ${a} is already used by ${owner}`);
+            else ips.set(a, `node ${n.name}`);
+          }
+          cluster.nodes.push(node);
+        });
+      const egress = stringList(
+        c.egressIps,
+        `${at}.egressIps`,
+        errors,
+        isIp,
+        "IP addresses",
+      );
+      if (egress) cluster.egressIps = egress;
+      const hide = stringList(c.hideNamespaces, `${at}.hideNamespaces`, errors);
+      if (hide) cluster.hideNamespaces = hide;
+      clusters.push(cluster);
+    });
+
+  const services: MappingWorkload[] = [];
+  const rawServices = raw.services ?? [];
+  if (!Array.isArray(rawServices))
+    errors.push("kubernetes.services: must be a list");
+  else
+    rawServices.forEach((s: unknown, i: number) => {
+      const p = `kubernetes.services[${i}]`;
+      if (!isObject(s)) {
+        errors.push(`${p}: must be an object`);
+        return;
+      }
+      for (const k of Object.keys(s))
+        if (!WORKLOAD_KEYS.has(k)) errors.push(`${p}: unknown key "${k}"`);
+      if (typeof s.id !== "string" || !s.id.trim()) {
+        errors.push(`${p}.id: required string`);
+        return;
+      }
+      const at = `kubernetes.services[${s.id}]`;
+      if (ids.has(s.id)) {
+        errors.push(`${at}: duplicate id`);
+        return;
+      }
+      if (typeof s.namespace !== "string" || !s.namespace.trim()) {
+        errors.push(`${at}.namespace: required string`);
+        return;
+      }
+      ids.add(s.id);
+      const w: MappingWorkload = { id: s.id, namespace: s.namespace };
+      for (const k of [
+        "name",
+        "owner",
+        "cluster",
+        "workload",
+        "loadQuery",
+        "process",
+      ] as const) {
+        const v = s[k];
+        if (v === undefined) continue;
+        if (typeof v !== "string") errors.push(`${at}.${k}: must be a string`);
+        else w[k] = v;
+      }
+      if (
+        w.cluster !== undefined &&
+        !clusters.some((c) => c.name === w.cluster)
+      )
+        errors.push(
+          `${at}.cluster: ${w.cluster} is not in kubernetes.clusters`,
+        );
+      if (w.cluster === undefined && clusters.length > 1)
+        errors.push(
+          `${at}.cluster: required when there is more than one cluster`,
+        );
+      const names = stringList(s.services, `${at}.services`, errors);
+      if (names) w.services = names;
+      if (s.replicas !== undefined) {
+        if (!Number.isInteger(s.replicas) || (s.replicas as number) < 1)
+          errors.push(`${at}.replicas: must be an integer >= 1`);
+        else w.replicas = s.replicas as number;
+      }
+      if (s.ha !== undefined) {
+        if (!HA_TYPES.includes(s.ha as HaType))
+          errors.push(`${at}.ha: must be one of ${HA_TYPES.join(", ")}`);
+        else w.ha = s.ha as HaType;
+      }
+      if (s.minUp !== undefined) {
+        if (!Number.isInteger(s.minUp) || (s.minUp as number) < 1)
+          errors.push(`${at}.minUp: must be an integer >= 1`);
+        else if (w.replicas !== undefined && (s.minUp as number) > w.replicas)
+          errors.push(
+            `${at}.minUp: ${s.minUp} is more than its ${w.replicas} replicas`,
+          );
+        else w.minUp = s.minUp as number;
+      }
+      if (s.nodePorts !== undefined) {
+        if (
+          !Array.isArray(s.nodePorts) ||
+          s.nodePorts.some((n) => !Number.isInteger(n) || n < 1 || n > 65535)
+        )
+          errors.push(`${at}.nodePorts: must be a list of ports`);
+        else w.nodePorts = s.nodePorts as number[];
+      }
+      if (s.loadBalancerIp !== undefined) {
+        if (typeof s.loadBalancerIp !== "string" || !isIp(s.loadBalancerIp))
+          errors.push(`${at}.loadBalancerIp: must be an IP address`);
+        else {
+          const owner = ips.get(s.loadBalancerIp);
+          if (owner)
+            errors.push(
+              `${at}.loadBalancerIp: ${s.loadBalancerIp} is already used by ${owner}`,
+            );
+          else {
+            ips.set(s.loadBalancerIp, s.id);
+            w.loadBalancerIp = s.loadBalancerIp;
+          }
+        }
+      }
+      if (s.load !== undefined) {
+        if (typeof s.load !== "number" || !(s.load >= 0))
+          errors.push(`${at}.load: must be a number >= 0 (percent)`);
+        else w.load = s.load;
+      }
+      const ha = w.ha ?? ((w.replicas ?? 1) > 1 ? "active-active" : "single");
+      if (ha !== "single" && w.replicas !== undefined && w.replicas < 2)
+        errors.push(`${at}.ha: ${ha} needs replicas >= 2`);
+      services.push(w);
+    });
+  return { clusters, services };
 }
 
 /**

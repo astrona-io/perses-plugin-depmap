@@ -40,6 +40,8 @@ export interface OptionInput {
   selectedEdge?: string;
   /** Needs mode: the selected service's transitive callees. */
   needs?: ReadonlySet<string>;
+  /** Map mode: every path through the selected service (its hop chain), highlighted. */
+  chain?: { nodes: ReadonlySet<string>; edges: ReadonlySet<string> };
   palette: Palette;
   box: SeriesBox;
   nowSeconds: number;
@@ -101,7 +103,10 @@ export function nodeSubtitle(n: ServiceNode): string {
   if (n.kind === "unknown") return "? find owner";
   if (n.kind === "external")
     return n.owner ? `external · ${n.owner}` : "external";
+  if (n.k8s?.type === "nat") return "SNAT · pod unknown";
+  if (n.k8s?.type === "nodes") return "Kubernetes nodes";
   const parts = [
+    n.k8s?.namespace,
     n.process,
     n.instances.length > 1 ? HA_LABELS[n.ha] : undefined,
   ].filter(Boolean);
@@ -113,8 +118,22 @@ function nodeTooltip(n: ServiceNode, f: FailureResult | undefined): string {
   if (n.kind === "unknown")
     rows.push("Not in the mapping: find its owner and add it.");
   if (n.owner) rows.push(`Owner: ${escapeHtml(n.owner)}`);
+  if (n.k8s) {
+    const k = n.k8s;
+    rows.push(
+      `Kubernetes · ${escapeHtml(k.cluster)}${k.namespace ? ` · ${escapeHtml(k.namespace)}` : ""}${
+        k.workload ? ` · ${escapeHtml(k.workload)}` : ""
+      }`,
+    );
+    if (k.type === "nat")
+      rows.push(
+        `Traffic that left node ${escapeHtml(k.node ?? "")} SNATed to its address, and no pod-side flow explains it (no OBI on that node then).`,
+      );
+    if (n.replicas) rows.push(`Replicas: ${n.replicas}`);
+  }
   if (n.kind === "internal") {
-    rows.push(n.wave > 0 ? `Wave ${n.wave}` : "Stays in the old DC");
+    if (!n.k8s)
+      rows.push(n.wave > 0 ? `Wave ${n.wave}` : "Stays in the old DC");
     rows.push(
       `HA: ${escapeHtml(HA_LABELS[n.ha])}${n.load !== undefined ? ` · load ${n.load}%` : ""}${
         n.vip ? ` · VIP ${escapeHtml(n.vip)}` : ""
@@ -174,6 +193,7 @@ export function buildOption(input: OptionInput): object {
     selectedNode,
     selectedEdge,
     needs,
+    chain,
     palette: p,
     box,
   } = input;
@@ -181,6 +201,7 @@ export function buildOption(input: OptionInput): object {
   const font = (px: number): number => clamp(Math.round(px * s), 7, px);
   const failing = mode === "failure" && failure;
   const needing = mode === "needs" && selectedNode && needs;
+  const chaining = mode === "map" && selectedNode && chain;
 
   const data: object[] = [];
   // Corners pin the bounding box to the whole layout, lanes included.
@@ -209,7 +230,14 @@ export function buildOption(input: OptionInput): object {
       symbol: "roundRect",
       symbolSize: [w * s, h * s],
       itemStyle: {
-        color: p.alpha(lane.key === "ext" ? p.secondary : p.primary, 0.04),
+        color: p.alpha(
+          lane.key === "ext"
+            ? p.secondary
+            : lane.key.startsWith("k8s:")
+              ? p.info
+              : p.primary,
+          lane.key.startsWith("k8s:") ? 0.07 : 0.04,
+        ),
         borderColor: p.alpha(p.text, 0.12),
         borderWidth: 1,
       },
@@ -261,6 +289,10 @@ export function buildOption(input: OptionInput): object {
         border = p.primary;
         line2 = `● needed · ${nodeSubtitle(n)}`;
       }
+    } else if (chaining) {
+      const on = chain.nodes.has(n.id);
+      faded = !on;
+      if (on && !isSel) border = p.primary;
     }
     if (isSel) border = p.primary;
     data.push({
@@ -403,6 +435,11 @@ export function buildOption(input: OptionInput): object {
         needs.has(e.target);
       color = on ? p.primary : color;
       opacity = on ? 1 : 0.15;
+    } else if (chaining) {
+      const on = chain.edges.has(e.id);
+      color = on ? p.primary : color;
+      opacity = on ? 1 : 0.15;
+      if (on) width += 0.8;
     }
     if (selectedEdge === e.id) {
       color = p.primary;

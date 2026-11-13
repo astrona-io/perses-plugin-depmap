@@ -47,8 +47,13 @@ export interface SidePanelProps {
   onWave: (id: string, wave: number) => void;
   changedWaves: number;
   onCopyMapping: () => void;
-  firewallWave: number;
-  onFirewallWave: (w: number) => void;
+  /** A wave number ("1") or a cluster boundary ("k8s:<cluster>"). */
+  firewallScope: string;
+  onFirewallScope: (scope: string) => void;
+  /** Kubernetes clusters on the map. */
+  clusters: string[];
+  /** Map mode: every service on a path through the selected one. */
+  chain?: ReadonlySet<string>;
   firewall: FirewallRule[];
   hiddenEdges: number;
   mappingErrors: string[];
@@ -116,6 +121,7 @@ export function SidePanel(props: SidePanelProps): ReactElement {
     .sort((a, b) => (a.name < b.name ? -1 : 1));
 
   const unknown = model.nodes.filter((n) => n.kind === "unknown");
+  const nat = model.nodes.filter((n) => n.k8s?.type === "nat");
   const rare = model.edges.filter(
     (e) => e.frequency === "weekly" || e.frequency === "monthly",
   );
@@ -256,6 +262,21 @@ export function SidePanel(props: SidePanelProps): ReactElement {
               Not in the mapping. Find its owner and add it.
             </Typography>
           ) : null}
+          {node.k8s ? (
+            <Typography variant="body2">
+              Kubernetes · {node.k8s.cluster}
+              {node.k8s.namespace ? ` · ${node.k8s.namespace}` : ""}
+              {node.k8s.workload ? ` · ${node.k8s.workload}` : ""}
+              {node.replicas ? ` · ${node.replicas} replicas` : ""}
+            </Typography>
+          ) : null}
+          {node.k8s?.type === "nat" ? (
+            <Typography variant="body2" color="warning.main">
+              Traffic that left node {node.k8s.node} with the node&apos;s
+              address (SNAT), and no pod-side flow explains it: OBI was not
+              running on that node then. The pod is unknown.
+            </Typography>
+          ) : null}
           {node.kind === "internal" ? (
             <>
               <Typography variant="body2">
@@ -263,22 +284,26 @@ export function SidePanel(props: SidePanelProps): ReactElement {
                 {node.load !== undefined ? ` · load ${node.load}%` : ""}
                 {node.vip ? ` · VIP ${node.vip}` : ""}
               </Typography>
-              <TextField
-                select
-                size="small"
-                label="Wave"
-                value={node.wave}
-                onChange={(e) => props.onWave(node.id, Number(e.target.value))}
-                sx={{ mt: 1, minWidth: 160 }}
-              >
-                {props.waves.map((w) => (
-                  <MenuItem key={w} value={w}>
-                    {w === 0
-                      ? o.stayLabel
-                      : (o.waveLabels[String(w)] ?? `Wave ${w}`)}
-                  </MenuItem>
-                ))}
-              </TextField>
+              {node.k8s ? null : (
+                <TextField
+                  select
+                  size="small"
+                  label="Wave"
+                  value={node.wave}
+                  onChange={(e) =>
+                    props.onWave(node.id, Number(e.target.value))
+                  }
+                  sx={{ mt: 1, minWidth: 160 }}
+                >
+                  {props.waves.map((w) => (
+                    <MenuItem key={w} value={w}>
+                      {w === 0
+                        ? o.stayLabel
+                        : (o.waveLabels[String(w)] ?? `Wave ${w}`)}
+                    </MenuItem>
+                  ))}
+                </TextField>
+              )}
             </>
           ) : null}
           {node.instances.length > 0 ? (
@@ -324,6 +349,16 @@ export function SidePanel(props: SidePanelProps): ReactElement {
               ),
             ].join(", ") || "nobody"}
           </Typography>
+          {mode === "map" && props.chain && props.chain.size > 1 ? (
+            <Typography variant="body2">
+              On a path through it ({props.chain.size - 1}):{" "}
+              {[...props.chain]
+                .filter((id) => id !== node.id)
+                .map(name)
+                .sort()
+                .join(", ")}
+            </Typography>
+          ) : null}
           {mode === "needs" && props.needs ? (
             <Typography variant="body2">
               Needs ({props.needs.size}):{" "}
@@ -415,7 +450,8 @@ export function SidePanel(props: SidePanelProps): ReactElement {
 
       <Divider sx={{ my: 1 }} />
       <Section title="Firewall rules">
-        {props.waves.filter((w) => w > 0).length === 0 ? (
+        {props.waves.filter((w) => w > 0).length === 0 &&
+        props.clusters.length === 0 ? (
           <Typography variant="body2" color="text.secondary">
             No service has a wave yet.
           </Typography>
@@ -430,18 +466,23 @@ export function SidePanel(props: SidePanelProps): ReactElement {
               <TextField
                 select
                 size="small"
-                label="For wave"
-                value={props.firewallWave}
-                onChange={(e) => props.onFirewallWave(Number(e.target.value))}
+                label="For"
+                value={props.firewallScope}
+                onChange={(e) => props.onFirewallScope(e.target.value)}
                 sx={{ minWidth: 120 }}
               >
                 {props.waves
                   .filter((w) => w > 0)
                   .map((w) => (
-                    <MenuItem key={w} value={w}>
+                    <MenuItem key={w} value={String(w)}>
                       {o.waveLabels[String(w)] ?? `Wave ${w}`}
                     </MenuItem>
                   ))}
+                {props.clusters.map((c) => (
+                  <MenuItem key={c} value={`k8s:${c}`}>
+                    Cluster boundary · {c}
+                  </MenuItem>
+                ))}
               </TextField>
               <CopyButton
                 text={formatRules(props.firewall)}
@@ -500,8 +541,15 @@ export function SidePanel(props: SidePanelProps): ReactElement {
             {props.hardWired.length} hard-wired client instance(s).
           </Typography>
         ) : null}
+        {nat.length > 0 ? (
+          <Typography variant="body2">
+            {nat.length} node(s) with SNATed traffic no pod explains:{" "}
+            {nat.map((n) => n.k8s?.node).join(", ")}. Run OBI on those nodes.
+          </Typography>
+        ) : null}
         {props.hiddenEdges === 0 &&
         unknown.length === 0 &&
+        nat.length === 0 &&
         rare.length === 0 &&
         props.hardWired.length === 0 ? (
           <Typography variant="body2" color="text.secondary">
