@@ -1,5 +1,5 @@
 # One server of the example estate: socat for listeners and clients, iproute2 for ss, bash for the
 # fallback script. The scripts are mounted by docker-compose.yaml, not copied.
-FROM docker.io/library/alpine:3.20
+FROM docker.io/library/alpine:3.24
 RUN apk add --no-cache bash iproute2 socat
 ENTRYPOINT ["/bin/bash", "/dev-depmap/server.sh"]
