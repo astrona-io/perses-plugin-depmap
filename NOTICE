@@ -1,0 +1,15 @@
+perses-plugin-depmap
+Copyright 2026 Astrona
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+It includes or is built from the following third-party material:
+
+- Perses shared CUE schemas (https://github.com/perses/shared), vendored into
+  the plugin archive at build time. Apache License 2.0, Copyright The Perses
+  Authors.
+- yaml (https://github.com/eemeli/yaml), bundled into the plugin to read the
+  mapping. ISC License, Copyright Eemeli Aro.
+- Graph canvas, pan and zoom and theming code copied from
+  perses-plugin-servicegraph (https://github.com/astrona-io/perses-plugin-servicegraph).
+  Apache License 2.0, Copyright 2026 Astrona.

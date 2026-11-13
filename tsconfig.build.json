@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "exclude": [
+    "**/*.stories.*",
+    "**/*.test.*",
+    "**/*.map",
+    "src/test-utils/**",
+    "src/setup-tests.ts"
+  ],
+  "compilerOptions": {
+    "emitDeclarationOnly": true,
+    "declaration": true,
+    "preserveWatchOutput": true
+  }
+}
