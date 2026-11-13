@@ -1,0 +1,38 @@
+# OpenTelemetry eBPF Instrumentation (OBI) configuration for the dependency map: network flow metrics
+# only, no application metrics or traces. Keys checked against the OBI docs for v1.0.0
+# (opentelemetry.io/docs/zero-code/obi/); see docs/metrics.md for the metric and its labels.
+#
+# OBI exports obi_network_flow_bytes_total on its Prometheus endpoint. The panel's default query reads
+# src_address, dst_address, server_port and dst_name, which are hidden by default (high cardinality) and
+# only appear when selected below.
+
+prometheus_export:
+  port: 9400
+  path: /metrics
+
+metrics:
+  # Only network flows. "application" (the default) would also instrument every process it finds.
+  features:
+    - network
+
+network:
+  # socket_filter is the default; use it too when the host runs Cilium.
+  source: socket_filter
+  # Optional: name your ranges; they show up as src_cidr / dst_cidr.
+  cidrs:
+    - cidr: 10.0.0.0/8
+      name: private-10
+    - cidr: 172.16.0.0/12
+      name: private-172
+    - cidr: 192.168.0.0/16
+      name: private-192
+
+attributes:
+  select:
+    obi_network_flow_bytes:
+      include:
+        - direction
+        - src.address
+        - dst.address
+        - server.port
+        - dst.name
