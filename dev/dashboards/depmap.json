@@ -1,0 +1,92 @@
+{
+  "kind": "Dashboard",
+  "metadata": {
+    "name": "dependency-map",
+    "project": "demo"
+  },
+  "spec": {
+    "display": {
+      "name": "Dependency map: old data centre"
+    },
+    "duration": "30d",
+    "variables": [],
+    "panels": {
+      "depmap": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "Who talks to whom",
+            "description": "Connections seen over the last 30 days, by migration wave. Click a service for its instances, calls and firewall rules; switch to What if to take servers down."
+          },
+          "plugin": {
+            "kind": "DependencyMapChart",
+            "spec": {
+              "datasource": {
+                "kind": "PrometheusDatasource"
+              },
+              "window": "30d",
+              "mapping": "services:\n  - id: lb\n    name: load balancer\n    owner: network team\n    wave: 1\n    ha: active-passive\n    process: haproxy · keepalived\n    vip: 10.1.1.10\n    instances:\n      - { host: edge01, ip: 10.1.1.1, role: primary }\n      - { host: edge02, ip: 10.1.1.2, role: standby }\n  - id: api\n    name: api-gw\n    owner: platform team\n    wave: 1\n    process: nginx\n    instances:\n      - { host: app02, ip: 10.1.1.12 }\n  - id: portal\n    name: portal\n    owner: web team\n    wave: 1\n    ha: active-active\n    load: 65\n    process: tomcat\n    vip: 10.1.1.20\n    instances:\n      - { host: app01, ip: 10.1.1.11 }\n      - { host: app04, ip: 10.1.1.14 }\n  - id: billing\n    name: billing\n    owner: finance IT\n    wave: 2\n    process: java\n    instances:\n      - { host: app03, ip: 10.1.1.13 }\n  - id: erp\n    name: erp-sync\n    owner: finance IT\n    wave: 2\n    process: erpsync.exe\n    instances:\n      - { host: win05, ip: 10.1.1.25 }\n  - id: reports\n    name: reports\n    owner: finance IT\n    wave: 2\n    process: cron · reportgen\n    instances:\n      - { host: batch01, ip: 10.1.3.1 }\n  - id: import\n    name: file-import\n    owner: integration team\n    wave: 2\n    process: cron · importer\n    instances:\n      - { host: batch02, ip: 10.1.3.2 }\n  - id: oracle\n    name: oracle\n    owner: DBA team\n    wave: 3\n    ha: active-passive\n    process: oracle · Data Guard\n    vip: 10.1.2.10\n    instances:\n      - { host: db01, ip: 10.1.2.1, role: primary }\n      - { host: db02, ip: 10.1.2.2, role: standby }\n  - id: mq\n    name: message queue\n    owner: integration team\n    wave: 3\n    process: mq broker\n    instances:\n      - { host: mq01, ip: 10.1.2.21 }\n  - id: ldap\n    name: ldap\n    owner: identity team\n    ha: quorum\n    process: slapd\n    instances:\n      - { host: ldap01, ip: 10.1.4.1 }\n      - { host: ldap02, ip: 10.1.4.2 }\n      - { host: ldap03, ip: 10.1.4.3 }\n  - id: nfs\n    name: nfs\n    owner: storage team\n    process: nfsd\n    instances:\n      - { host: nfs01, ip: 10.1.4.10 }\n  - id: smtp\n    name: smtp relay\n    owner: messaging team\n    process: postfix\n    instances:\n      - { host: smtp01, ip: 10.1.4.20 }\nexternal:\n  - { match: 198.51.100.21, name: ftp.partner.example.com, owner: partner }\n  - { match: 198.51.100.43, name: bank-api.example.com, owner: bank }",
+              "lanes": {
+                "waveLabels": {
+                  "1": "Wave 1 (March)",
+                  "2": "Wave 2 (May)",
+                  "3": "Wave 3 (Sept)"
+                },
+                "stayLabel": "Stays",
+                "externalLabel": "Outside"
+              },
+              "scenarios": [
+                {
+                  "name": "LDAP split",
+                  "down": [
+                    "ldap01",
+                    "ldap02"
+                  ]
+                },
+                {
+                  "name": "Primary DB lost",
+                  "down": [
+                    "db01"
+                  ]
+                },
+                {
+                  "name": "One portal node",
+                  "down": [
+                    "app01"
+                  ]
+                },
+                {
+                  "name": "NFS lost",
+                  "down": [
+                    "nfs01"
+                  ]
+                }
+              ],
+              "linkTemplates": {
+                "node": "https://cmdb.example.com/services/${service}"
+              }
+            }
+          }
+        }
+      }
+    },
+    "layouts": [
+      {
+        "kind": "Grid",
+        "spec": {
+          "items": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 24,
+              "height": 17,
+              "content": {
+                "$ref": "#/spec/panels/depmap"
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

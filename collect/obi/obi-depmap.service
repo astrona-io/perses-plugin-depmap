@@ -1,0 +1,21 @@
+# OBI with network flow metrics only. Installed by collect/obi/install.sh.
+[Unit]
+Description=OpenTelemetry eBPF Instrumentation (network flows for the dependency map)
+Documentation=https://opentelemetry.io/docs/zero-code/obi/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/obi --config=/etc/obi-depmap/config.yaml
+Restart=on-failure
+RestartSec=10
+# eBPF needs these; nothing else.
+AmbientCapabilities=CAP_BPF CAP_NET_ADMIN CAP_NET_RAW CAP_PERFMON CAP_SYS_RESOURCE CAP_SYS_PTRACE CAP_DAC_READ_SEARCH
+CapabilityBoundingSet=CAP_BPF CAP_NET_ADMIN CAP_NET_RAW CAP_PERFMON CAP_SYS_RESOURCE CAP_SYS_PTRACE CAP_DAC_READ_SEARCH
+LimitMEMLOCK=infinity
+ProtectHome=yes
+ProtectSystem=full
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,163 @@
+name: release
+
+# Runs on a pushed tag vX.Y.Z, or a prerelease tag such as vX.Y.Z-rc.1, whose
+# X.Y.Z must equal the version in package.json. It publishes:
+#
+#   - the plugin archive (`percli plugin build`) and its .sha256 on the GitHub
+#     release for the tag, created as a prerelease for a -suffix tag;
+#   - the plugin-only OCI image (Containerfile) as ghcr.io/<owner>/<repo>:<tag>
+#     for linux/amd64 and linux/arm64, labelled with source, revision and
+#     version;
+#   - build provenance attestations for both.
+#
+# The release body is left empty: write the notes on GitHub after the run.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: release-${{ github.ref }}
+
+env:
+  PERCLI_VERSION: 0.55.1
+  PERCLI_SHA256: 7c38ace5ce665e22d7d4f823b8bc0c8e91f9bcef381f218d8c564e0fe62ba750
+  CUE_VERSION: v0.17.1
+  CUE_SHA256: a39b0c97695069d95d276d99be0f5dbabb081d801bfdc9ba49b76efaf94e2369
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version from the tag
+        id: version
+        run: |
+          tag="$GITHUB_REF_NAME"
+          version="${tag#v}"
+          base="${version%%-*}"
+          package="$(node -p 'require("./package.json").version')"
+          if [ "$base" != "$package" ]; then
+            echo "::error::tag $tag does not match package.json version $package"
+            exit 1
+          fi
+          prerelease=false
+          if [ "$version" != "$base" ]; then
+            prerelease=true
+          fi
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install percli and cue
+        run: |
+          mkdir -p "$RUNNER_TEMP/tools" "$RUNNER_TEMP/bin"
+          cd "$RUNNER_TEMP/tools"
+          curl -fsSLo perses.tar.gz "https://github.com/perses/perses/releases/download/v${PERCLI_VERSION}/perses_${PERCLI_VERSION}_linux_amd64.tar.gz"
+          curl -fsSLo cue.tar.gz "https://github.com/cue-lang/cue/releases/download/${CUE_VERSION}/cue_${CUE_VERSION}_linux_amd64.tar.gz"
+          printf '%s  perses.tar.gz\n%s  cue.tar.gz\n' "$PERCLI_SHA256" "$CUE_SHA256" | sha256sum --check
+          tar -xzf perses.tar.gz -C "$RUNNER_TEMP/bin" percli
+          tar -xzf cue.tar.gz -C "$RUNNER_TEMP/bin" cue
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run type-check
+      - run: npm test
+      - run: cue mod tidy --check
+      - run: percli plugin test-schemas
+      - run: npm run build
+
+      - name: Build the plugin archive
+        id: archive
+        run: |
+          # The archive is named after package.json: give a prerelease its full version.
+          npm pkg set version="${{ steps.version.outputs.version }}"
+          percli plugin build
+          archive="$(ls -- *-"${{ steps.version.outputs.version }}".tar.gz)"
+          sha256sum "$archive" > "$archive.sha256"
+          cat "$archive.sha256"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          ARCHIVE: ${{ steps.archive.outputs.archive }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" "$ARCHIVE" "$ARCHIVE.sha256" --clobber
+          else
+            flags=()
+            if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); fi
+            gh release create "$TAG" "$ARCHIVE" "$ARCHIVE.sha256" \
+              --verify-tag --title "$TAG" --notes "" "${flags[@]}"
+          fi
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: ${{ steps.archive.outputs.archive }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        env:
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: type=raw,value=${{ steps.version.outputs.tag }}
+          labels: org.opencontainers.image.version=${{ steps.version.outputs.version }}
+          annotations: org.opencontainers.image.version=${{ steps.version.outputs.version }}
+
+      - name: Build and push the image
+        id: image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Containerfile
+          platforms: linux/amd64,linux/arm64
+          build-args: VERSION=${{ steps.version.outputs.version }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          push: true
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
+
+      - name: Check the pushed image
+        env:
+          REF: ghcr.io/${{ github.repository }}:${{ steps.version.outputs.tag }}
+        run: |
+          docker buildx imagetools inspect "$REF"
+          for platform in linux/amd64 linux/arm64; do
+            docker buildx imagetools inspect "$REF" --format "{{ json .Manifest }}" \
+              | jq -e --arg p "$platform" '[.manifests[] | .platform | "\(.os)/\(.architecture)"] | index($p)' > /dev/null \
+              || { echo "::error::$REF has no $platform"; exit 1; }
+          done

@@ -1,0 +1,2 @@
+# /etc/cron.d/depmap-snapshot: for servers without systemd. Every minute, as root (for process names).
+* * * * * root DEPMAP_TEXTFILE=/var/lib/node_exporter/textfile_collector/depmap.prom /usr/local/bin/depmap-snapshot.sh >/dev/null 2>&1

@@ -1,0 +1,26 @@
+# Connections of the example estate: who calls whom, and when. Read by the servers in dev/ (each runs
+# the lines whose src_host is its own name), by the 30-day backfill, and by the unit tests.
+# schedule: constant | every:<n>h+<offset> | daily@<HH> | weekly@<weekday 0-6>@<HH> | monthly (last day, 23:40)
+# src_host	src_ip	process	dst_ip	dst_port	schedule
+edge01	10.1.1.1	haproxy	10.1.1.12	443	constant
+app02	10.1.1.12	nginx	10.1.1.20	8080	constant
+app01	10.1.1.11	java	10.1.1.13	8443	constant
+app04	10.1.1.14	java	10.1.1.13	8443	constant
+app01	10.1.1.11	java	10.1.4.1	636	constant
+app04	10.1.1.14	java	10.1.4.1	636	constant
+app01	10.1.1.11	java	10.1.4.10	2049	constant
+app04	10.1.1.14	java	10.1.4.10	2049	constant
+app03	10.1.1.13	java	10.1.2.10	1521	constant
+app03	10.1.1.13	java	10.1.2.21	1414	constant
+app03	10.1.1.13	java	198.51.100.43	443	every:2h+0
+win05	10.1.1.25	erpsync	10.1.2.1	1521	constant
+win05	10.1.1.25	erpsync	10.1.4.1	636	every:6h+0
+win05	10.1.1.25	erpsync	10.1.4.2	636	every:6h+2
+win05	10.1.1.25	erpsync	10.1.4.3	636	every:6h+4
+win05	10.1.1.25	erpsync	10.1.2.21	1414	constant
+batch01	10.1.3.1	reportgen	10.1.2.10	1521	daily@02
+batch01	10.1.3.1	reportgen	10.1.4.20	25	daily@02
+batch01	10.1.3.1	ftp	198.51.100.21	21	monthly
+batch02	10.1.3.2	importer	10.1.4.10	2049	daily@03
+batch02	10.1.3.2	importer	10.1.2.10	1521	daily@03
+db01	10.1.2.1	oracle	10.1.7.22	1521	daily@04

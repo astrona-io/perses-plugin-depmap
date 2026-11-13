@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/astrona-io/perses-plugin-depmap/collect/mapping.schema.json",
+  "title": "Dependency map mapping",
+  "description": "Services, instances, owners, migration waves, HA groups and external endpoints for the Dependency map panel.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "services": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/service" }
+    },
+    "external": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/external" }
+    }
+  },
+  "$defs": {
+    "ip": {
+      "type": "string",
+      "anyOf": [{ "format": "ipv4" }, { "format": "ipv6" }]
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "instances"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "description": "Unique id of the service." },
+        "name": { "type": "string", "description": "Shown on the map; defaults to id." },
+        "owner": { "type": "string" },
+        "wave": { "type": "integer", "minimum": 0, "description": "0 = stays in the old data centre, 1..n = migration wave." },
+        "ha": { "enum": ["single", "active-active", "active-passive", "quorum"], "default": "single" },
+        "minUp": { "type": "integer", "minimum": 1, "description": "active-active: instances that must be up. Default 1." },
+        "load": { "type": "number", "minimum": 0, "description": "Load as % of the capacity of all instances together." },
+        "loadQuery": { "type": "string", "description": "PromQL returning the load as % of the capacity of all instances." },
+        "vip": { "$ref": "#/$defs/ip", "description": "Virtual IP clients should call. Calls to an instance IP are hard-wired to that instance." },
+        "process": { "type": "string" },
+        "instances": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["host", "ip"],
+            "properties": {
+              "host": { "type": "string", "minLength": 1 },
+              "ip": { "$ref": "#/$defs/ip" },
+              "role": { "enum": ["primary", "standby", "member"] }
+            }
+          }
+        }
+      }
+    },
+    "external": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["match"],
+      "properties": {
+        "match": { "type": "string", "minLength": 1, "description": "An IP, a CIDR, or a name reported by the collector." },
+        "name": { "type": "string" },
+        "owner": { "type": "string" }
+      }
+    }
+  }
+}

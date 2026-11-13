@@ -1,0 +1,3 @@
+# Only the plugin archive goes into the image (see Containerfile).
+*
+!*.tar.gz

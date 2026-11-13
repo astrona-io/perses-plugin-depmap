@@ -1,0 +1,17 @@
+# Install: see collect/README.md. One snapshot of this server's TCP connections for node_exporter.
+[Unit]
+Description=depmap: snapshot TCP connections for the dependency map
+Documentation=https://github.com/astrona-io/perses-plugin-depmap/tree/main/collect
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/depmap-snapshot.sh
+Environment=DEPMAP_TEXTFILE=/var/lib/node_exporter/textfile_collector/depmap.prom
+Environment=DEPMAP_STATE=/var/lib/depmap/state
+# Root is only needed for process names (ss -p). Nothing is written outside these two directories.
+ProtectSystem=strict
+ReadWritePaths=/var/lib/node_exporter/textfile_collector /var/lib/depmap
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+Nice=10

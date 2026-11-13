@@ -1,0 +1,53 @@
+# Mapping for the Dependency map panel. Paste it into the panel's "Mapping" option (YAML or JSON).
+# Traffic shows who talks to whom; this file adds what traffic cannot tell: names, owners, the
+# migration wave, HA groups and which addresses outside your servers are known endpoints.
+# The structure is described in mapping.schema.json (editors such as VS Code validate against it with
+# the line "# yaml-language-server: $schema=./mapping.schema.json" at the top).
+#
+# A server that shows traffic but is not listed here is drawn as "unknown" with its IP. That is often
+# the most useful thing on the map: the server nobody remembered.
+services:
+  - id: portal              # required, unique; used in links and in "Copy updated mapping"
+    name: customer portal   # shown on the map; defaults to id
+    owner: web team
+    wave: 1                 # 0 = stays in the old data centre, 1..n = migration wave
+    ha: active-active       # single (default) | active-active | active-passive | quorum
+    minUp: 1                # active-active only: instances that must be up. Default 1
+    load: 65                # % of the capacity of all instances together; above 100% after a
+                            # failure means the rest overloads. Or loadQuery: (PromQL returning %)
+    vip: 10.0.1.20          # optional: clients that call the VIP survive one instance down;
+                            # clients that call an instance IP directly are "hard-wired" to it
+    process: tomcat         # free text
+    instances:
+      - { host: web01, ip: 10.0.1.11 }
+      - { host: web02, ip: 10.0.1.12 }
+
+  - id: db
+    name: orders database
+    owner: DBA team
+    wave: 3
+    ha: active-passive      # the standby takes over when the primary goes down
+    vip: 10.0.2.10
+    instances:
+      - { host: db01, ip: 10.0.2.1, role: primary }
+      - { host: db02, ip: 10.0.2.2, role: standby }
+
+  - id: ldap
+    owner: identity team
+    ha: quorum              # more than half of the instances must be up
+    instances:
+      - { host: ldap01, ip: 10.0.4.1 }
+      - { host: ldap02, ip: 10.0.4.2 }
+      - { host: ldap03, ip: 10.0.4.3 }
+
+  - id: reports
+    owner: finance IT
+    wave: 2
+    instances:
+      - { host: batch01, ip: 10.0.3.1 }
+
+# Addresses outside your estate. match: an IP, a CIDR, or a name the collector reports (OBI's
+# dst_name). Anything outside the estate that matches nothing is drawn as an unknown external.
+external:
+  - { match: 198.51.100.21, name: ftp.partner.example.com, owner: partner }
+  - { match: 203.0.113.0/24, name: payment provider, owner: finance IT }

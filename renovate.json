@@ -1,0 +1,32 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "platformAutomerge": true,
+  "packageRules": [
+    {
+      "description": "Merge minor, patch and digest updates of stable dependencies once CI passes",
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "matchCurrentVersion": "!/^v?0\\./",
+      "automerge": true
+    },
+    {
+      "description": "GitHub Actions: merge minor, patch and digest updates once CI passes",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "automerge": true
+    },
+    {
+      "description": "Shared with the Perses host at runtime (module federation): review by hand",
+      "matchPackageNames": [
+        "/^@perses-dev//",
+        "react",
+        "react-dom",
+        "echarts",
+        "/^@mui//",
+        "/^@emotion//",
+        "/^@module-federation//"
+      ],
+      "automerge": false
+    }
+  ]
+}

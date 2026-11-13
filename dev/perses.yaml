@@ -1,0 +1,12 @@
+database:
+  file:
+    folder: /tmp/perses
+plugin:
+  archive_paths:
+    - /etc/perses/plugins-archive
+    - /etc/perses/plugins-archive-depmap
+provisioning:
+  interval: 10s
+  folders:
+    - /etc/perses/provisioning
+    - /etc/perses/dashboards
