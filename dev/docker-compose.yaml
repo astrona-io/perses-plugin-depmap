@@ -254,7 +254,7 @@ services:
         ipv4_address: 10.1.9.43
 
   node-exporter:
-    image: docker.io/prom/node-exporter:v1.9.1
+    image: docker.io/prom/node-exporter:v1.12.1
     command:
       - --collector.disable-defaults
       - --collector.textfile
