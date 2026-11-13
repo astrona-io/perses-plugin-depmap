@@ -111,7 +111,7 @@ external:
   - { match: "*.example.com", name: saas }
 `);
 
-  it("drops traffic inside a service, keeps bytes per day, matches CIDRs and names", () => {
+  it("drops traffic inside a service, keeps bytes per second, matches CIDRs and names", () => {
     const m = buildModel(
       mapping,
       [
@@ -172,10 +172,10 @@ external:
     ]);
     expect(m.edges[0]).toMatchObject({
       hoursSeen: 3,
-      bytesPerDay: 2400,
       lastSeen: 10800,
     });
-    expect(m.edges[1]!.bytesPerDay).toBeUndefined();
+    expect(m.edges[0]!.bytesPerSecond).toBeCloseTo(2400 / 86400);
+    expect(m.edges[1]!.bytesPerSecond).toBeUndefined();
   });
 
   it("adds volume from a separate query", () => {
@@ -205,7 +205,7 @@ external:
         ],
       },
     );
-    expect(m.edges[0]!.bytesPerDay).toBe(1000);
+    expect(m.edges[0]!.bytesPerSecond).toBeCloseTo(1000 / 86400);
   });
 
   it("takes load from a load query over the mapping", () => {

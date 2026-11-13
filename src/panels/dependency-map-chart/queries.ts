@@ -40,7 +40,7 @@ export interface MatrixSeries {
  * One sample per series. Labels are read so both collectors fit the same code:
  * - OBI: `src_address`, `dst_address`, `server_port` (or `dst_port`), `dst_name`; the value is bytes.
  *   With Kubernetes decoration on, `k8s_{src,dst}_{type,namespace,name,owner_name,owner_type,node_name,
- *   node_ip}` and `k8s_cluster_name` say which pod, Service or node each side is (see docs/metrics.md),
+ *   node_ip}` and the cluster label (`k8s_cluster_name` unless configured) say which pod, Service or node each side is (see docs/metrics.md),
  *   and `src_cidr` / `dst_cidr` which named range it is in.
  * - Fallback script: `src_ip`, `dst_ip`, `dst_port`, `src_process`, `direction`. Its value is 1 while a
  *   connection exists. On `direction="in"` the script saw an inbound connection: `dst_ip` is the remote
@@ -49,6 +49,7 @@ export interface MatrixSeries {
 function k8sRef(
   m: Record<string, string>,
   side: "src" | "dst",
+  clusterLabel: string,
 ): K8sRef | undefined {
   const type = m[`k8s_${side}_type`];
   if (!type) return undefined;
@@ -57,7 +58,7 @@ function k8sRef(
     const v = m[label];
     if (v) ref[key] = v;
   };
-  set("cluster", "k8s_cluster_name");
+  set("cluster", clusterLabel);
   set("namespace", `k8s_${side}_namespace`);
   set("name", `k8s_${side}_name`);
   set("owner", `k8s_${side}_owner_name`);
@@ -70,6 +71,7 @@ function k8sRef(
 export function seriesToSamples(
   series: MatrixSeries[],
   valueIsBytes: boolean,
+  clusterLabel = "k8s_cluster_name",
 ): EdgeSample[] {
   const out: EdgeSample[] = [];
   for (const s of series) {
@@ -100,8 +102,8 @@ export function seriesToSamples(
       bytes: valueIsBytes ? bytes : undefined,
       lastSeen,
     };
-    const srcK8s = k8sRef(m, "src");
-    const dstK8s = k8sRef(m, "dst");
+    const srcK8s = k8sRef(m, "src", clusterLabel);
+    const dstK8s = k8sRef(m, "dst", clusterLabel);
     if (srcK8s) sample.srcK8s = srcK8s;
     if (dstK8s) sample.dstK8s = dstK8s;
     if (m.src_cidr) sample.srcCidr = m.src_cidr;

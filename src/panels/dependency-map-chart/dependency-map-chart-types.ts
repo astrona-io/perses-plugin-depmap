@@ -24,6 +24,13 @@ export const FREQUENCIES: Frequency[] = [
 
 export type Mode = "map" | "failure" | "needs";
 
+/** Map mode: the estate drill-down (estate, cluster, machine, workload, places) or the migration lanes. */
+export type MapView = "estate" | "lanes";
+
+/** Rates are shown per second, minute or hour; `auto` picks per value. */
+export type RateUnit = "s" | "min" | "h" | "auto";
+export const RATE_UNITS: RateUnit[] = ["s", "min", "h", "auto"];
+
 /**
  * Minimum share of the window's hours (0..1) an edge must be seen in to get each class. Anything seen
  * less often than `weekly` is `monthly` (rare).
@@ -74,7 +81,10 @@ export interface DependencyMapChartOptions {
   queries?: QueryRoles;
   /** The mapping file (YAML or JSON): services, instances, owners, waves, HA groups, externals. */
   mapping?: string;
-  /** Observation window ending at the dashboard's end time. Default `30d`. */
+  /**
+   * Observation window ending at the dashboard's end time, e.g. `30d`. Default: the dashboard's time
+   * range. Rates and frequencies are computed over it.
+   */
   window?: string;
   frequencyThresholds?: Partial<FrequencyThresholds>;
   lanes?: LaneOptions;
@@ -85,6 +95,21 @@ export interface DependencyMapChartOptions {
   scenarios?: Scenario[];
   /** Mode the panel opens in. Default `map`. */
   defaultMode?: Mode;
+  /** View the map mode opens in. Default `estate`. */
+  defaultView?: MapView;
+  /** Unit rates open in. Default `s` (per second). */
+  rateUnit?: RateUnit;
+  /** Label holding the Kubernetes cluster name. Default `k8s_cluster_name`. */
+  clusterLabel?: string;
+  /** Name of the cluster when no sample carries the cluster label. Default `kubernetes`. */
+  clusterName?: string;
+  /** Internet addresses listed by name on a provider's page; the rest are counted. Default 40. */
+  internetTopAddresses?: number;
+  /**
+   * Regular expression over namespace and workload names that marks monitoring traffic, which the
+   * "Hide monitoring" switch hides. Empty turns the switch off.
+   */
+  monitoringPattern?: string;
 }
 
 /**
@@ -98,7 +123,11 @@ export const DEFAULT_EDGE_QUERY =
 /** The fallback script's connections, seen at least once per hour. */
 export const DEFAULT_FALLBACK_QUERY =
   "max by (src_ip, src_host, src_process, dst_ip, dst_port, direction) (max_over_time(depmap_connection_seen[1h]))";
-export const DEFAULT_WINDOW = "30d";
+export const DEFAULT_CLUSTER_LABEL = "k8s_cluster_name";
+export const DEFAULT_CLUSTER_NAME = "kubernetes";
+export const DEFAULT_INTERNET_TOP = 40;
+export const DEFAULT_MONITORING_PATTERN =
+  "prometheus|grafana|alloy|otel|opentelemetry|vmagent|vmsingle|vmalert|victoria|node-exporter|kube-state-metrics|fluent-bit|loki|tempo|pyroscope|^obi";
 export const DEFAULT_THRESHOLDS: FrequencyThresholds = {
   constantly: 0.9,
   hourly: 0.2,
@@ -121,6 +150,12 @@ export interface ResolvedOptions {
   links: LinkTemplates;
   scenarios: Scenario[];
   defaultMode: Mode;
+  defaultView: MapView;
+  rateUnit: RateUnit;
+  clusterLabel: string;
+  clusterName: string;
+  internetTop: number;
+  monitoringPattern: string;
 }
 
 export function resolveOptions(
@@ -134,7 +169,7 @@ export function resolveOptions(
       volume: q.volume ?? "",
     },
     mapping: spec.mapping ?? "",
-    window: spec.window || DEFAULT_WINDOW,
+    window: spec.window ?? "",
     thresholds: { ...DEFAULT_THRESHOLDS, ...(spec.frequencyThresholds ?? {}) },
     waveLabels: spec.lanes?.waveLabels ?? {},
     stayLabel: spec.lanes?.stayLabel || DEFAULT_STAY_LABEL,
@@ -147,13 +182,21 @@ export function resolveOptions(
     links: spec.linkTemplates ?? {},
     scenarios: spec.scenarios ?? [],
     defaultMode: spec.defaultMode ?? "map",
+    defaultView: spec.defaultView ?? "estate",
+    rateUnit: spec.rateUnit ?? "s",
+    clusterLabel: spec.clusterLabel || DEFAULT_CLUSTER_LABEL,
+    clusterName: spec.clusterName || DEFAULT_CLUSTER_NAME,
+    internetTop:
+      spec.internetTopAddresses !== undefined && spec.internetTopAddresses >= 0
+        ? Math.floor(spec.internetTopAddresses)
+        : DEFAULT_INTERNET_TOP,
+    monitoringPattern: spec.monitoringPattern ?? DEFAULT_MONITORING_PATTERN,
   };
 }
 
 export function createInitialDependencyMapChartOptions(): DependencyMapChartOptions {
   return {
     queries: { edge: DEFAULT_EDGE_QUERY, fallback: DEFAULT_FALLBACK_QUERY },
-    window: DEFAULT_WINDOW,
     mapping: "services: []\n",
   };
 }

@@ -11,7 +11,7 @@ import {
   ToggleButton,
   Typography,
 } from "@mui/material";
-import { Mode, ResolvedOptions } from "./dependency-map-chart-types";
+import { Mode, RateUnit, ResolvedOptions } from "./dependency-map-chart-types";
 import {
   FailureResult,
   HardWiredClient,
@@ -22,7 +22,7 @@ import {
   FREQUENCY_LABELS,
   fillTemplate,
   formatAgo,
-  formatBytes,
+  formatRate,
   safeHref,
 } from "./format";
 import { HA_LABELS, STATE_LABELS } from "./chart-option";
@@ -58,6 +58,7 @@ export interface SidePanelProps {
   hiddenEdges: number;
   mappingErrors: string[];
   nowSeconds: number;
+  rateUnit?: RateUnit;
   copy: (text: string) => Promise<boolean>;
 }
 
@@ -110,6 +111,7 @@ export function SidePanel(props: SidePanelProps): ReactElement {
     selectedNode,
     selectedEdge,
     nowSeconds,
+    rateUnit,
   } = props;
   const name = (id: string): string => model.byId.get(id)?.name ?? id;
   const node = selectedNode ? model.byId.get(selectedNode) : undefined;
@@ -401,9 +403,9 @@ export function SidePanel(props: SidePanelProps): ReactElement {
           <Typography variant="body2">
             Last seen {formatAgo(edge.lastSeen, nowSeconds)}
           </Typography>
-          {edge.bytesPerDay !== undefined ? (
+          {edge.bytesPerSecond !== undefined ? (
             <Typography variant="body2">
-              {formatBytes(edge.bytesPerDay)} per day
+              {formatRate(edge.bytesPerSecond, rateUnit)} on average
             </Typography>
           ) : null}
           {edge.crosses.length ? (

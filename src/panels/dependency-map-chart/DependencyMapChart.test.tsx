@@ -17,7 +17,7 @@ import {
   DEFAULT_THRESHOLDS,
 } from "./dependency-map-chart-types";
 import { DepmapData } from "./useDepmapData";
-import { Mapping } from "./mapping";
+import { Mapping, parseMapping } from "./mapping";
 import { EdgeSample, buildModel } from "./model";
 
 // The canvas is replaced by a stub that exposes the option and lets tests click items.
@@ -79,7 +79,7 @@ function renderComponent(spec: DependencyMapChartOptions): void {
   render(
     <DependencyMapChartComponent
       {...({
-        spec,
+        spec: { defaultView: "lanes", ...spec },
         contentDimensions: dims,
       } as unknown as DependencyMapChartProps)}
     />,
@@ -174,7 +174,7 @@ describe("DependencyMapChartComponent", () => {
 
 describe("DependencyMapView", () => {
   const model = estateModel();
-  const o = resolveOptions({ mapping: mappingText });
+  const o = resolveOptions({ mapping: mappingText, defaultView: "lanes" });
   const view = (
     over: Partial<Parameters<typeof DependencyMapView>[0]> = {},
   ): void => {
@@ -182,6 +182,7 @@ describe("DependencyMapView", () => {
       <DependencyMapView
         model={model}
         o={o}
+        mapping={parseMapping(mappingText).mapping}
         mappingText={mappingText}
         mappingErrors={[]}
         palette={palette}

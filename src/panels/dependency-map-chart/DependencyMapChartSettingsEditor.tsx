@@ -1,5 +1,6 @@
 import { ReactElement, useEffect, useState } from "react";
 import {
+  Button,
   Checkbox,
   FormControlLabel,
   FormGroup,
@@ -15,23 +16,31 @@ import {
   OptionsEditorGroup,
 } from "@perses-dev/components";
 import { DatasourceSelect } from "@perses-dev/plugin-system";
+import { stringify } from "yaml";
 import {
   DEFAULT_EDGE_QUERY,
   DEFAULT_EXTERNAL_LABEL,
   DEFAULT_FALLBACK_QUERY,
   DEFAULT_STAY_LABEL,
+  DEFAULT_CLUSTER_LABEL,
+  DEFAULT_CLUSTER_NAME,
+  DEFAULT_INTERNET_TOP,
+  DEFAULT_MONITORING_PATTERN,
   DEFAULT_THRESHOLDS,
-  DEFAULT_WINDOW,
   DependencyMapChartEditorProps,
   DependencyMapChartOptions,
   FREQUENCIES,
   FrequencyThresholds,
+  MapView,
   Mode,
+  RATE_UNITS,
+  RateUnit,
   PROMETHEUS_DATASOURCE_KIND,
   Scenario,
 } from "./dependency-map-chart-types";
 import { FREQUENCY_LABELS } from "./format";
 import { parseMapping } from "./mapping";
+import { DEFAULT_INTERNET_PROVIDERS } from "./places";
 
 /** `1=Wave 1 (March)` per line, to and from the wave label map. */
 export function parseWaveLabels(text: string): Record<string, string> {
@@ -212,8 +221,8 @@ export function DependencyMapChartSettingsEditor(
           />
           <TextControl
             label="Window"
-            description="How far back to look, ending at the dashboard's end time. Up to 365d."
-            placeholder={DEFAULT_WINDOW}
+            description="How far back to look, ending at the dashboard's end time, e.g. 30d. Empty: the dashboard's time range. Up to 365d."
+            placeholder="the dashboard's time range"
             value={value.window}
             onChange={(window) => set({ window })}
           />
@@ -235,6 +244,28 @@ export function DependencyMapChartSettingsEditor(
                   style: { fontFamily: "monospace", fontSize: 12 },
                 }}
               />
+            }
+          />
+          <OptionsEditorControl
+            label="Internet providers"
+            description="Without places.internet the panel uses built-in ranges for common providers. Copy them as YAML to edit them in the mapping; an empty list turns them off."
+            control={
+              <Button
+                size="small"
+                variant="outlined"
+                sx={{ textTransform: "none" }}
+                onClick={() =>
+                  void navigator.clipboard
+                    ?.writeText(
+                      stringify({
+                        places: { internet: DEFAULT_INTERNET_PROVIDERS },
+                      }),
+                    )
+                    .catch(() => undefined)
+                }
+              >
+                Copy default providers
+              </Button>
             }
           />
           {mappingErrors.length > 0 ? (
@@ -323,6 +354,84 @@ export function DependencyMapChartSettingsEditor(
                 <MenuItem value="needs">Needs</MenuItem>
               </TextField>
             }
+          />
+          <OptionsEditorControl
+            label="Map opens as"
+            control={
+              <TextField
+                select
+                size="small"
+                value={value.defaultView ?? "estate"}
+                onChange={(e) =>
+                  set({ defaultView: e.target.value as MapView })
+                }
+              >
+                <MenuItem value="estate">
+                  Estate (clusters, machines, places)
+                </MenuItem>
+                <MenuItem value="lanes">Lanes (migration waves)</MenuItem>
+              </TextField>
+            }
+          />
+          <OptionsEditorControl
+            label="Rates in"
+            control={
+              <TextField
+                select
+                size="small"
+                value={value.rateUnit ?? "s"}
+                onChange={(e) => set({ rateUnit: e.target.value as RateUnit })}
+              >
+                {RATE_UNITS.map((u) => (
+                  <MenuItem key={u} value={u}>
+                    {u === "auto" ? "Auto" : `per ${u}`}
+                  </MenuItem>
+                ))}
+              </TextField>
+            }
+          />
+          <TextControl
+            label="Cluster label"
+            description="Label holding the Kubernetes cluster name; one block per value"
+            placeholder={DEFAULT_CLUSTER_LABEL}
+            value={value.clusterLabel}
+            onChange={(clusterLabel) => set({ clusterLabel })}
+          />
+          <TextControl
+            label="Cluster name"
+            description="Used when no series carries the cluster label"
+            placeholder={DEFAULT_CLUSTER_NAME}
+            value={value.clusterName}
+            onChange={(clusterName) => set({ clusterName })}
+          />
+          <OptionsEditorControl
+            label="Internet addresses listed by name"
+            description="Per provider page; the rest are counted"
+            control={
+              <TextField
+                size="small"
+                type="number"
+                inputProps={{ min: 0, step: 1 }}
+                placeholder={String(DEFAULT_INTERNET_TOP)}
+                value={value.internetTopAddresses ?? ""}
+                onChange={(e) => {
+                  const n = Number(e.target.value);
+                  set({
+                    internetTopAddresses:
+                      e.target.value === "" || !Number.isFinite(n)
+                        ? undefined
+                        : Math.max(0, Math.floor(n)),
+                  });
+                }}
+              />
+            }
+          />
+          <TextControl
+            label="Monitoring pattern"
+            description="Regular expression over namespace and workload names for Hide monitoring"
+            placeholder={DEFAULT_MONITORING_PATTERN}
+            value={value.monitoringPattern}
+            onChange={(monitoringPattern) => set({ monitoringPattern })}
           />
           <LinesControl
             label="Wave labels"

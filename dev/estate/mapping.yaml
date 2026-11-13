@@ -105,6 +105,21 @@ services:
 external:
   - { match: 198.51.100.21, name: ftp.partner.example.com, owner: partner }
   - { match: 198.51.100.43, name: bank-api.example.com, owner: bank }
+# Places for the estate view: addresses that are not servers in this file. Internet providers are
+# left out, so the panel's built-in ranges (GitHub, Cloudflare, ...) apply.
+places:
+  loadBalancers:
+    - name: edge-lb
+      note: hardware load balancer, no collector
+      match: [10.1.9.10]
+      forwardsTo: [example-cluster]
+  storage:
+    - name: ceph
+      preset: ceph
+      match: [10.1.5.0/24]
+  lan:
+    - name: old data centre
+      match: [10.1.0.0/16]
 # The Kubernetes half (dev/hybrid.sh): a kind cluster whose nodes sit in the old data centre at
 # 10.1.8.10-12. No pod addresses: pods are grouped by namespace and workload from OBI's decoration.
 # pricing is not listed, so it is grouped automatically.

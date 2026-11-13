@@ -23,6 +23,11 @@ const OLD_DC = { "control-plane": "10.1.8.10", worker: "10.1.8.11", worker2: "10
 const ORACLE_VIP = "10.1.2.10";
 const BANK = "198.51.100.43";
 const BILLING = "10.1.1.13";
+// Places of the estate view (dev/estate/mapping.yaml `places`): a load balancer in front of the
+// cluster, a Ceph cluster the nodes mount volumes from, and two internet providers the pods call.
+const EDGE_LB = "10.1.9.10";
+const CEPH = ["10.1.5.1", "10.1.5.2"];
+const PROVIDERS = [["140.82.112.3", 443], ["104.16.132.229", 443]];
 
 const items = JSON.parse(readFileSync(0, "utf8")).items;
 const nodes = items
@@ -52,7 +57,7 @@ if (nodes.some((n) => !n.olddc) || !pricingSvc || pods.length < 4) {
 
 const cidr = (ip) =>
   ip.startsWith("10.244.") ? "pods" : ip.startsWith("10.96.") ? "services"
-    : ip.startsWith("10.1.") ? "old-dc" : ip.startsWith("198.51.100.") ? "internet" : "";
+    : ip.startsWith("10.1.") ? "old-dc" : /^(198\.51\.100|140\.82|104\.16)\./.test(ip) ? "internet" : "";
 const podSide = (side, p) => ({
   [`k8s_${side}_type`]: "Pod",
   [`k8s_${side}_namespace`]: "shop",
@@ -116,6 +121,18 @@ for (const p of orders) {
   // kube-proxy forwarding NodePort traffic from worker2 (SNATed to the node): the panel drops it.
   obi(worker2, worker2.internal, p.ip, 8080, p.name, { ...nodeSide("src", worker2), ...podSide("dst", p) }, 900);
 }
+// Pods calling internet providers, with the pod as the source: OBI keeps the source decoration.
+for (const p of pods)
+  for (const [dst, port] of PROVIDERS) obi(p.node, p.ip, dst, port, dst, podSide("src", p), 800);
+// Node kernels mounting Ceph volumes (RBD): monitors on 6789, OSDs on 6800-7300.
+for (const n of nodes)
+  for (const [i, host] of CEPH.entries()) {
+    obi(n, n.olddc, host, 6789, host, nodeSide("src", n), 40);
+    obi(n, n.olddc, host, 6800 + i, host, nodeSide("src", n), 90000);
+  }
+// The edge load balancer forwarding to the orders NodePort; its own host runs no collector.
+for (const n of nodes.filter((x) => x.name !== "perses-plugin-depmap-control-plane"))
+  obi(n, EDGE_LB, n.olddc, 30080, n.name, nodeSide("dst", n), 12000);
 // billing (VM) -> the orders NodePort on worker2, as OBI on worker2 sees it.
 obi(worker2, BILLING, worker2.olddc, 30080, worker2.name, nodeSide("dst", worker2), 1800);
 

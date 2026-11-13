@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/astrona-io/perses-plugin-depmap/collect/mapping.schema.json",
   "title": "Dependency map mapping",
-  "description": "Services, instances, owners, migration waves, HA groups, external endpoints and Kubernetes workloads for the Dependency map panel.",
+  "description": "Services, instances, owners, migration waves, HA groups, external endpoints, Kubernetes workloads and estate places for the Dependency map panel.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -16,9 +16,35 @@
     },
     "kubernetes": {
       "$ref": "#/$defs/kubernetes"
+    },
+    "places": {
+      "$ref": "#/$defs/places"
     }
   },
   "$defs": {
+    "place": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "match"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "match": { "type": "array", "items": { "type": "string" }, "description": "IP addresses and CIDRs in the place." },
+        "note": { "type": "string", "description": "Shown under the name, e.g. \"HAProxy + keepalived\"." },
+        "preset": { "enum": ["ceph"], "description": "Storage only: names Ceph's port roles (mon on 3300 and 6789, OSD / mgr on 6800-7300)." },
+        "forwardsTo": { "type": "array", "items": { "type": "string" }, "description": "Load balancers only: clusters or places it forwards to; drawn dashed as \"not measured\" when no such flow is measured." }
+      }
+    },
+    "places": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Places on the estate view. Leaving out internet uses well-known public ranges; internet: [] turns them off.",
+      "properties": {
+        "loadBalancers": { "type": "array", "items": { "$ref": "#/$defs/place" } },
+        "storage": { "type": "array", "items": { "$ref": "#/$defs/place" } },
+        "lan": { "type": "array", "items": { "$ref": "#/$defs/place" } },
+        "internet": { "type": "array", "items": { "$ref": "#/$defs/place" }, "description": "Providers by their published ranges." }
+      }
+    },
     "ip": {
       "type": "string",
       "anyOf": [{ "format": "ipv4" }, { "format": "ipv6" }]

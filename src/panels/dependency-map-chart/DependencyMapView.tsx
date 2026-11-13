@@ -14,9 +14,14 @@ import {
 import {
   FREQUENCIES,
   Frequency,
+  MapView,
   Mode,
+  RATE_UNITS,
+  RateUnit,
   ResolvedOptions,
 } from "./dependency-map-chart-types";
+import { buildEstate } from "./estate";
+import { EstateView } from "./EstateView";
 import {
   evaluateFailure,
   hardWiredClients,
@@ -39,13 +44,15 @@ import {
 } from "./chart-option";
 import { GraphCanvas } from "./GraphCanvas";
 import { laneSpecs, layoutGraph } from "./layout";
-import { updateWaves } from "./mapping";
+import { Mapping, updateWaves } from "./mapping";
 import { DepModel } from "./model";
 import { SidePanel } from "./SidePanel";
 
 export interface DependencyMapViewProps {
   model: DepModel;
   o: ResolvedOptions;
+  /** The parsed mapping: places for the estate view. */
+  mapping: Mapping;
   /** The mapping text, for "Copy updated mapping". */
   mappingText: string;
   mappingErrors: string[];
@@ -59,6 +66,12 @@ export interface DependencyMapViewProps {
 }
 
 const TOOLBAR_H = 44;
+const RATE_LABELS: Record<RateUnit, string> = {
+  s: "/s",
+  min: "/min",
+  h: "/h",
+  auto: "Auto",
+};
 /** Below this panel width the side panel covers the map instead of sitting beside it. */
 export const NARROW = 720;
 
@@ -78,6 +91,8 @@ async function copyText(text: string): Promise<boolean> {
 export function DependencyMapView(props: DependencyMapViewProps): ReactElement {
   const { o, palette, width, height, nowSeconds } = props;
   const [mode, setMode] = useState<Mode>(o.defaultMode);
+  const [mapView, setMapView] = useState<MapView>(o.defaultView);
+  const [rateUnit, setRateUnit] = useState<RateUnit>(o.rateUnit);
   const [shown, setShown] = useState<Set<Frequency>>(
     () => new Set(o.edgeFilter),
   );
@@ -93,6 +108,9 @@ export function DependencyMapView(props: DependencyMapViewProps): ReactElement {
 
   useEffect(() => setMode(o.defaultMode), [o.defaultMode]);
   useEffect(() => setShown(new Set(o.edgeFilter)), [o.edgeFilter]);
+  useEffect(() => setMapView(o.defaultView), [o.defaultView]);
+  useEffect(() => setRateUnit(o.rateUnit), [o.rateUnit]);
+  const estateMode = mode === "map" && mapView === "estate";
 
   // The model with any waves moved in the panel.
   const model: DepModel = useMemo(() => {
@@ -135,6 +153,11 @@ export function DependencyMapView(props: DependencyMapViewProps): ReactElement {
       hiddenEdges: model.edges.length - edges.length,
     };
   }, [model, shown, o.showExternal]);
+
+  const estate = useMemo(
+    () => (estateMode ? buildEstate(model, props.mapping) : undefined),
+    [estateMode, model, props.mapping],
+  );
 
   const failure = useMemo(
     () =>
@@ -223,6 +246,7 @@ export function DependencyMapView(props: DependencyMapViewProps): ReactElement {
         palette,
         box: fitBox(layout, mapW, mapH),
         nowSeconds,
+        rateUnit,
       }),
     [
       view.model,
@@ -238,6 +262,7 @@ export function DependencyMapView(props: DependencyMapViewProps): ReactElement {
       mapW,
       mapH,
       nowSeconds,
+      rateUnit,
     ],
   );
 
@@ -351,6 +376,28 @@ export function DependencyMapView(props: DependencyMapViewProps): ReactElement {
             Needs
           </ToggleButton>
         </ToggleButtonGroup>
+        {mode === "map" ? (
+          <ToggleButtonGroup
+            size="small"
+            exclusive
+            value={mapView}
+            onChange={(_, v: MapView | null) => v && setMapView(v)}
+            aria-label="Map view"
+          >
+            <ToggleButton
+              value="estate"
+              sx={{ textTransform: "none", py: 0.25 }}
+            >
+              Estate
+            </ToggleButton>
+            <ToggleButton
+              value="lanes"
+              sx={{ textTransform: "none", py: 0.25 }}
+            >
+              Lanes
+            </ToggleButton>
+          </ToggleButtonGroup>
+        ) : null}
         {FREQUENCIES.map((f) => (
           <FormControlLabel
             key={f}
@@ -400,6 +447,23 @@ export function DependencyMapView(props: DependencyMapViewProps): ReactElement {
           </Button>
         ) : null}
         <Box sx={{ flexGrow: 1 }} />
+        <ToggleButtonGroup
+          size="small"
+          exclusive
+          value={rateUnit}
+          onChange={(_, v: RateUnit | null) => v && setRateUnit(v)}
+          aria-label="Rate unit"
+        >
+          {RATE_UNITS.map((u) => (
+            <ToggleButton
+              key={u}
+              value={u}
+              sx={{ textTransform: "none", py: 0.25, px: 0.75 }}
+            >
+              {RATE_LABELS[u]}
+            </ToggleButton>
+          ))}
+        </ToggleButtonGroup>
         {mode === "failure" && failure ? (
           <Typography
             variant="body2"
@@ -442,143 +506,160 @@ export function DependencyMapView(props: DependencyMapViewProps): ReactElement {
           </IconButton>
         </Tooltip>
       </Stack>
-      <Box
-        sx={{
-          position: "relative",
-          flexGrow: 1,
-          display: "flex",
-          minHeight: 0,
-        }}
-      >
+      {estateMode && estate ? (
+        <EstateView
+          model={model}
+          estate={estate}
+          edges={view.model.edges}
+          o={o}
+          rateUnit={rateUnit}
+          width={width}
+          height={mapH}
+          panelOpen={panelOpen}
+          narrow={narrow}
+          panelW={panelW}
+          onOpenLanes={() => setMapView("lanes")}
+        />
+      ) : (
         <Box
           sx={{
-            width: mapW,
-            height: mapH,
-            flexShrink: 0,
             position: "relative",
+            flexGrow: 1,
+            display: "flex",
+            minHeight: 0,
           }}
-          data-testid="depmap-canvas"
         >
-          {/*
-           * The canvas cannot take keyboard focus per node, so every service is also a button here:
-           * hidden until one of them is focused (Tab into the map), then shown over the map.
-           */}
-          <Box
-            component="nav"
-            aria-label="Services on the map"
-            sx={{
-              position: "absolute",
-              zIndex: 3,
-              left: 4,
-              top: 4,
-              maxWidth: mapW - 8,
-              maxHeight: mapH - 8,
-              overflow: "auto",
-              display: "flex",
-              flexWrap: "wrap",
-              gap: 0.5,
-              p: 0.5,
-              bgcolor: "background.paper",
-              boxShadow: 2,
-              borderRadius: 1,
-              "&:not(:focus-within)": {
-                clip: "rect(0 0 0 0)",
-                clipPath: "inset(50%)",
-                width: 1,
-                height: 1,
-                overflow: "hidden",
-                p: 0,
-                whiteSpace: "nowrap",
-              },
-            }}
-          >
-            {view.model.nodes.map((n) => (
-              <Button
-                key={n.id}
-                size="small"
-                variant={selectedNode === n.id ? "contained" : "outlined"}
-                aria-pressed={selectedNode === n.id}
-                sx={{ textTransform: "none", py: 0 }}
-                onClick={() => onNodeClick(n.id)}
-              >
-                {n.name}
-              </Button>
-            ))}
-          </Box>
-          <GraphCanvas
-            option={option}
-            theme={props.echartsTheme}
-            width={mapW}
-            height={mapH}
-            onNodeClick={onNodeClick}
-            onEdgeClick={onEdgeClick}
-            onBlankClick={onBlankClick}
-          />
-        </Box>
-        {panelOpen ? (
           <Box
             sx={{
-              width: narrow ? Math.min(width, 340) : panelW,
+              width: mapW,
               height: mapH,
-              borderLeft: 1,
-              borderColor: "divider",
-              bgcolor: "background.paper",
-              ...(narrow
-                ? {
-                    position: "absolute",
-                    right: 0,
-                    top: 0,
-                    zIndex: 2,
-                    boxShadow: 4,
-                  }
-                : {}),
+              flexShrink: 0,
+              position: "relative",
             }}
+            data-testid="depmap-canvas"
           >
-            <SidePanel
-              model={model}
-              o={o}
-              mode={mode}
-              failure={failure}
-              down={down}
-              onToggleHost={toggleHost}
-              onScenario={(d) => {
-                setMode("failure");
-                setDown(new Set(d));
+            {/*
+             * The canvas cannot take keyboard focus per node, so every service is also a button here:
+             * hidden until one of them is focused (Tab into the map), then shown over the map.
+             */}
+            <Box
+              component="nav"
+              aria-label="Services on the map"
+              sx={{
+                position: "absolute",
+                zIndex: 3,
+                left: 4,
+                top: 4,
+                maxWidth: mapW - 8,
+                maxHeight: mapH - 8,
+                overflow: "auto",
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 0.5,
+                p: 0.5,
+                bgcolor: "background.paper",
+                boxShadow: 2,
+                borderRadius: 1,
+                "&:not(:focus-within)": {
+                  clip: "rect(0 0 0 0)",
+                  clipPath: "inset(50%)",
+                  width: 1,
+                  height: 1,
+                  overflow: "hidden",
+                  p: 0,
+                  whiteSpace: "nowrap",
+                },
               }}
-              spofs={spofs}
-              hardWired={hardWired}
-              selectedNode={selectedNode}
-              selectedEdge={selectedEdge}
-              onSelectNode={(id) => {
-                setSelectedNode(id);
-                setSelectedEdge(undefined);
-              }}
-              onSelectEdge={(id) => {
-                setSelectedEdge(id);
-                setSelectedNode(undefined);
-              }}
-              needs={needs}
-              waves={waves}
-              onWave={(id, w) =>
-                setWaveOverrides((cur) => ({ ...cur, [id]: w }))
-              }
-              changedWaves={changedWaves}
-              onCopyMapping={() =>
-                void copyText(updateWaves(props.mappingText, waveOverrides))
-              }
-              firewallScope={firewallScope}
-              onFirewallScope={setFirewallScope}
-              clusters={clusters}
-              chain={chain?.nodes}
-              firewall={firewall}
-              hiddenEdges={view.hiddenEdges}
-              mappingErrors={props.mappingErrors}
-              nowSeconds={nowSeconds}
-              copy={copyText}
+            >
+              {view.model.nodes.map((n) => (
+                <Button
+                  key={n.id}
+                  size="small"
+                  variant={selectedNode === n.id ? "contained" : "outlined"}
+                  aria-pressed={selectedNode === n.id}
+                  sx={{ textTransform: "none", py: 0 }}
+                  onClick={() => onNodeClick(n.id)}
+                >
+                  {n.name}
+                </Button>
+              ))}
+            </Box>
+            <GraphCanvas
+              option={option}
+              theme={props.echartsTheme}
+              width={mapW}
+              height={mapH}
+              onNodeClick={onNodeClick}
+              onEdgeClick={onEdgeClick}
+              onBlankClick={onBlankClick}
             />
           </Box>
-        ) : null}
-      </Box>
+          {panelOpen ? (
+            <Box
+              sx={{
+                width: narrow ? Math.min(width, 340) : panelW,
+                height: mapH,
+                borderLeft: 1,
+                borderColor: "divider",
+                bgcolor: "background.paper",
+                ...(narrow
+                  ? {
+                      position: "absolute",
+                      right: 0,
+                      top: 0,
+                      zIndex: 2,
+                      boxShadow: 4,
+                    }
+                  : {}),
+              }}
+            >
+              <SidePanel
+                model={model}
+                o={o}
+                mode={mode}
+                failure={failure}
+                down={down}
+                onToggleHost={toggleHost}
+                onScenario={(d) => {
+                  setMode("failure");
+                  setDown(new Set(d));
+                }}
+                spofs={spofs}
+                hardWired={hardWired}
+                selectedNode={selectedNode}
+                selectedEdge={selectedEdge}
+                onSelectNode={(id) => {
+                  setSelectedNode(id);
+                  setSelectedEdge(undefined);
+                }}
+                onSelectEdge={(id) => {
+                  setSelectedEdge(id);
+                  setSelectedNode(undefined);
+                }}
+                needs={needs}
+                waves={waves}
+                onWave={(id, w) =>
+                  setWaveOverrides((cur) => ({ ...cur, [id]: w }))
+                }
+                changedWaves={changedWaves}
+                onCopyMapping={() =>
+                  void copyText(updateWaves(props.mappingText, waveOverrides))
+                }
+                firewallScope={firewallScope}
+                onFirewallScope={setFirewallScope}
+                clusters={clusters}
+                chain={chain?.nodes}
+                firewall={firewall}
+                hiddenEdges={view.hiddenEdges}
+                mappingErrors={props.mappingErrors}
+                nowSeconds={nowSeconds}
+                copy={copyText}
+                rateUnit={rateUnit}
+              />
+            </Box>
+          ) : null}
+        </Box>
+      )}
     </Box>
   );
 }

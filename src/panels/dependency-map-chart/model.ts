@@ -119,8 +119,8 @@ export interface DepEdge {
   /** hoursSeen / window hours, 0..1. */
   share: number;
   frequency: Frequency;
-  /** Average bytes per day over the window, when bytes are known. */
-  bytesPerDay?: number;
+  /** Average bytes per second over the window, when bytes are known. */
+  bytesPerSecond?: number;
   lastSeen: number;
   /** Per caller instance, the callee instances (hosts) it connected to; "vip" for the service address. */
   pairs: Record<string, string[]>;
@@ -217,6 +217,8 @@ export function buildModel(
   options: {
     volume?: EdgeSample[];
     loads?: Record<string, number>;
+    /** Name of the cluster when the samples carry no cluster label and the mapping names none. */
+    clusterName?: string;
   } = {},
 ): DepModel {
   const nodes: ServiceNode[] = [];
@@ -248,7 +250,11 @@ export function buildModel(
   }
 
   // Kubernetes: inventory, stitching, the mapped workloads, the clusters.
-  const inv = buildInventory(mapping, [...samples, ...(options.volume ?? [])]);
+  const inv = buildInventory(
+    mapping,
+    [...samples, ...(options.volume ?? [])],
+    options.clusterName,
+  );
   const stitched = stitch(mapping, inv, samples);
   const clusters = new Map<string, ClusterInfo>();
   const clusterNames = new Set<string>([
@@ -530,7 +536,7 @@ export function buildModel(
       hoursSeen: e.hours.size,
       share,
       frequency: classifyFrequency(share, thresholds),
-      bytesPerDay: e.hasBytes ? e.bytes / (hours / 24) : undefined,
+      bytesPerSecond: e.hasBytes ? e.bytes / (hours * 3600) : undefined,
       lastSeen: e.lastSeen,
       pairs,
       pins,

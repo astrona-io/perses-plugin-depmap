@@ -25,7 +25,7 @@ const dashboard = {
           display: {
             name: "Who talks to whom",
             description:
-              "Connections seen over the last 30 days, by migration wave, with the Kubernetes cluster in its own lane. Click a service for its instances, calls, the path through it and firewall rules; switch to What if to take servers or nodes down.",
+              "Connections seen over the last 30 days. Estate: clusters, machines, namespaces and places (load balancer, storage, LAN, internet); click any box to open it, any workload for its dependencies. Lanes: the servers by migration wave, with firewall rules; What if takes servers or nodes down.",
           },
           plugin: {
             kind: "DependencyMapChart",

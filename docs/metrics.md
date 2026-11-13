@@ -84,7 +84,8 @@ Checked against the OBI v1.0.0 network metrics documentation:
 | TCP-level detail (retransmits, RTT, connection states) | Not provided by OBI's network metrics |
 
 Each sample is bytes in that hour; an hour with a sample counts as "seen" for the frequency class,
-and the sum over the window divided by its days gives bytes per day.
+and the sum over the window divided by its length in seconds gives the average rate, shown per
+second, minute or hour.
 
 What OBI's network metrics do **not** carry is the process name. The map does not need it (the
 mapping names the service behind each IP), and the fallback script records it where it runs. OBI's
