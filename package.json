@@ -55,7 +55,7 @@
   "peerDependencies": {
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
-    "@hookform/resolvers": "^5.9.1",
+    "@hookform/resolvers": "^5.9.1 || ^7.0.0",
     "@mui/material": "^6.1.10",
     "@perses-dev/client": "0.55.1",
     "@perses-dev/components": "0.55.1",
