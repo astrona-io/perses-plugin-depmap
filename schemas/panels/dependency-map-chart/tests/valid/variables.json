@@ -1,0 +1,1 @@
+{"kind":"DependencyMapChart","spec":{"datasource":"$ds","window":"$window","defaultMode":"failure","scenarios":[{"name":"db","down":["db01"]}]}}

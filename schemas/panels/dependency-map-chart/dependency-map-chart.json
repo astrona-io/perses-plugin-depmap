@@ -1,0 +1,23 @@
+{
+  "kind": "DependencyMapChart",
+  "spec": {
+    "datasource": { "kind": "PrometheusDatasource" },
+    "queries": {
+      "edge": "sum by (src_address, dst_address, server_port, dst_name) (increase(obi_network_flow_bytes_total{direction=\"request\"}[1h])) > 0",
+      "fallback": "max by (src_ip, src_host, src_process, dst_ip, dst_port, direction) (max_over_time(depmap_connection_seen[1h]))"
+    },
+    "mapping": "services:\n  - id: portal\n    owner: web team\n    wave: 1\n    ha: active-active\n    minUp: 1\n    load: 65\n    vip: 10.1.1.20\n    instances:\n      - { host: app01, ip: 10.1.1.11 }\n      - { host: app04, ip: 10.1.1.14 }\nexternal:\n  - { match: 198.51.100.43, name: bank-api.example.com, owner: bank }\n",
+    "window": "30d",
+    "frequencyThresholds": { "constantly": 0.9, "hourly": 0.2, "daily": 0.02, "weekly": 0.004 },
+    "lanes": {
+      "waveLabels": { "1": "Wave 1 (March)", "2": "Wave 2 (May)" },
+      "stayLabel": "Stays in old DC",
+      "externalLabel": "External / unknown",
+      "showExternal": true
+    },
+    "edgeFilter": ["constantly", "hourly", "daily", "weekly", "monthly"],
+    "linkTemplates": { "node": "/projects/infra/dashboards/host?var-host=${host}" },
+    "scenarios": [{ "name": "LDAP split", "down": ["ldap01", "ldap02"] }],
+    "defaultMode": "map"
+  }
+}
