@@ -20,7 +20,7 @@
   },
   "devDependencies": {
     "@module-federation/rsbuild-plugin": "^2.9.1",
-    "@rsbuild/core": "^1.7.6",
+    "@rsbuild/core": "^2.0.0",
     "@rsbuild/plugin-react": "^1.4.6",
     "@swc/cli": "^0.8.1",
     "@swc/core": "^1.15.43",
